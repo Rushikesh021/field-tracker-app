@@ -51,7 +51,12 @@ import {
   VolumeX,
   Sparkles,
   ExternalLink,
-  ArrowLeft
+  ArrowLeft,
+  ZoomIn,
+  ZoomOut,
+  RotateCw,
+  Maximize2,
+  Image as ImageIcon
 } from 'lucide-react';
 
 export interface ClientRecord {
@@ -106,6 +111,11 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
   const [lightboxPhotos, setLightboxPhotos] = useState<string[] | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [lightboxTitle, setLightboxTitle] = useState('');
+  const [lightboxZoom, setLightboxZoom] = useState(1);
+  const [lightboxRotation, setLightboxRotation] = useState(0);
+  const [lightboxPosition, setLightboxPosition] = useState({ x: 0, y: 0 });
+  const [isLightboxDragging, setIsLightboxDragging] = useState(false);
+  const [lightboxDragStart, setLightboxDragStart] = useState({ x: 0, y: 0 });
 
   // Delete Client state
   const [deletingClient, setDeletingClient] = useState<ClientRecord | null>(null);
@@ -447,18 +457,54 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
     URL.revokeObjectURL(url);
   };
 
+  // Reset Lightbox Zoom & Pan
+  const resetLightboxZoom = useCallback(() => {
+    setLightboxZoom(1);
+    setLightboxRotation(0);
+    setLightboxPosition({ x: 0, y: 0 });
+    setIsLightboxDragging(false);
+  }, []);
+
   // Open Lightbox
   const openLightbox = (photos: string[], startIndex = 0, title = 'Client Photos', e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    resetLightboxZoom();
     setLightboxPhotos(photos);
     setLightboxIndex(startIndex);
     setLightboxTitle(title);
   };
 
-  const closeLightbox = () => {
+  const closeLightbox = useCallback(() => {
+    resetLightboxZoom();
     setLightboxPhotos(null);
     setLightboxIndex(0);
-  };
+  }, [resetLightboxZoom]);
+
+  const nextLightboxPhoto = useCallback((e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!lightboxPhotos || lightboxPhotos.length <= 1) return;
+    resetLightboxZoom();
+    setLightboxIndex((prev) => (prev < lightboxPhotos.length - 1 ? prev + 1 : 0));
+  }, [lightboxPhotos, resetLightboxZoom]);
+
+  const prevLightboxPhoto = useCallback((e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!lightboxPhotos || lightboxPhotos.length <= 1) return;
+    resetLightboxZoom();
+    setLightboxIndex((prev) => (prev > 0 ? prev - 1 : lightboxPhotos.length - 1));
+  }, [lightboxPhotos, resetLightboxZoom]);
+
+  // Keyboard navigation for photo lightbox
+  useEffect(() => {
+    if (!lightboxPhotos) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeLightbox();
+      if (e.key === 'ArrowRight') nextLightboxPhoto();
+      if (e.key === 'ArrowLeft') prevLightboxPhoto();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [lightboxPhotos, closeLightbox, nextLightboxPhoto, prevLightboxPhoto]);
 
   // Metrics calculation
   const metrics = useMemo(() => {
@@ -1257,40 +1303,199 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
         </div>
       )}
 
-      {/* Lightbox Modal */}
+      {/* Lightbox Modal with Zoom & Pan */}
       {lightboxPhotos && (
-        <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="absolute top-4 left-4 text-white text-sm font-bold truncate max-w-xs sm:max-w-md">
-            {lightboxTitle} ({lightboxIndex + 1}/{lightboxPhotos.length})
-          </div>
-          <button
-            onClick={closeLightbox}
-            className="absolute top-4 right-4 p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition"
+        <div
+          className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-md flex flex-col justify-between p-3 sm:p-6 select-none animate-in fade-in duration-200"
+          onClick={closeLightbox}
+        >
+          {/* Lightbox Header & Zoom Controls */}
+          <div
+            className="w-full max-w-5xl mx-auto flex items-center justify-between text-white pb-3 border-b border-slate-800/80 gap-3"
+            onClick={(e) => e.stopPropagation()}
           >
-            <X className="w-6 h-6" />
-          </button>
-          <div className="relative max-w-4xl w-full max-h-[85vh] flex items-center justify-center">
-            <img
-              src={lightboxPhotos[lightboxIndex]}
-              alt="fullscreen"
-              className="max-h-[80vh] max-w-full rounded-2xl object-contain shadow-2xl"
-            />
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center flex-shrink-0">
+                <ImageIcon className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-sm font-bold text-white leading-tight truncate">{lightboxTitle}</h4>
+                <p className="text-xs text-slate-400">
+                  Photo {lightboxIndex + 1} of {lightboxPhotos.length}
+                </p>
+              </div>
+            </div>
+
+            {/* Zoom & Rotation Toolbar */}
+            <div className="flex items-center gap-1 sm:gap-2">
+              <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-700/80 backdrop-blur-md px-2 py-1 rounded-xl shadow-lg text-white">
+                <button
+                  type="button"
+                  onClick={() => setLightboxZoom((prev) => {
+                    const next = Math.max(prev - 0.5, 1);
+                    if (next === 1) setLightboxPosition({ x: 0, y: 0 });
+                    return next;
+                  })}
+                  disabled={lightboxZoom <= 1}
+                  className="p-1.5 rounded-lg hover:bg-white/10 disabled:opacity-30 transition text-slate-300 hover:text-white"
+                  title="Zoom Out (-)"
+                >
+                  <ZoomOut className="w-4 h-4" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={resetLightboxZoom}
+                  className="px-2 py-0.5 rounded text-xs font-mono font-bold text-blue-400 hover:bg-white/10 transition"
+                  title="Click to reset zoom"
+                >
+                  {Math.round(lightboxZoom * 100)}%
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setLightboxZoom((prev) => Math.min(prev + 0.5, 4))}
+                  disabled={lightboxZoom >= 4}
+                  className="p-1.5 rounded-lg hover:bg-white/10 disabled:opacity-30 transition text-slate-300 hover:text-white"
+                  title="Zoom In (+)"
+                >
+                  <ZoomIn className="w-4 h-4" />
+                </button>
+
+                <div className="w-px h-4 bg-slate-700 mx-0.5" />
+
+                <button
+                  type="button"
+                  onClick={() => setLightboxRotation((prev) => (prev + 90) % 360)}
+                  className="p-1.5 rounded-lg hover:bg-white/10 transition text-slate-300 hover:text-white"
+                  title="Rotate 90°"
+                >
+                  <RotateCw className="w-4 h-4" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={resetLightboxZoom}
+                  className="p-1.5 rounded-lg hover:bg-white/10 transition text-slate-300 hover:text-white"
+                  title="Reset Fit (1:1)"
+                >
+                  <Maximize2 className="w-4 h-4" />
+                </button>
+              </div>
+
+              <button
+                onClick={closeLightbox}
+                className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition border border-slate-700/60"
+                title="Close (Esc)"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Lightbox Center Content with Pan & Zoom */}
+          <div
+            className="relative flex-1 flex items-center justify-center my-2 sm:my-4 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+            onWheel={(e) => {
+              e.preventDefault();
+              if (e.deltaY < 0) {
+                setLightboxZoom((prev) => Math.min(prev + 0.25, 4));
+              } else {
+                setLightboxZoom((prev) => {
+                  const next = Math.max(prev - 0.25, 1);
+                  if (next === 1) setLightboxPosition({ x: 0, y: 0 });
+                  return next;
+                });
+              }
+            }}
+            onMouseDown={(e) => {
+              if (lightboxZoom > 1) {
+                setIsLightboxDragging(true);
+                setLightboxDragStart({ x: e.clientX - lightboxPosition.x, y: e.clientY - lightboxPosition.y });
+              }
+            }}
+            onMouseMove={(e) => {
+              if (isLightboxDragging && lightboxZoom > 1) {
+                setLightboxPosition({ x: e.clientX - lightboxDragStart.x, y: e.clientY - lightboxDragStart.y });
+              }
+            }}
+            onMouseUp={() => setIsLightboxDragging(false)}
+            onMouseLeave={() => setIsLightboxDragging(false)}
+            onDoubleClick={() => {
+              if (lightboxZoom > 1) {
+                resetLightboxZoom();
+              } else {
+                setLightboxZoom(2.5);
+              }
+            }}
+          >
+            {/* Prev Button */}
             {lightboxPhotos.length > 1 && (
-              <>
-                <button
-                  onClick={() => setLightboxIndex((prev) => (prev > 0 ? prev - 1 : lightboxPhotos.length - 1))}
-                  className="absolute left-2 p-3 rounded-full bg-black/50 hover:bg-black/80 text-white transition"
-                >
-                  <ChevronLeft className="w-6 h-6" />
-                </button>
-                <button
-                  onClick={() => setLightboxIndex((prev) => (prev < lightboxPhotos.length - 1 ? prev + 1 : 0))}
-                  className="absolute right-2 p-3 rounded-full bg-black/50 hover:bg-black/80 text-white transition"
-                >
-                  <ChevronRight className="w-6 h-6" />
-                </button>
-              </>
+              <button
+                onClick={prevLightboxPhoto}
+                className="absolute left-2 sm:left-6 z-20 p-3 rounded-full bg-slate-900/80 hover:bg-blue-600 text-white transition shadow-xl border border-slate-700/60 hover:scale-110"
+                title="Previous Photo (Left Arrow)"
+              >
+                <ChevronLeft className="w-6 h-6" />
+              </button>
             )}
+
+            {/* Main Zoomable Image */}
+            <div className="max-h-[70vh] max-w-[90vw] flex items-center justify-center">
+              <img
+                src={lightboxPhotos[lightboxIndex]}
+                alt={`${lightboxTitle} Full Size ${lightboxIndex + 1}`}
+                draggable={false}
+                style={{
+                  transform: `translate(${lightboxPosition.x}px, ${lightboxPosition.y}px) scale(${lightboxZoom}) rotate(${lightboxRotation}deg)`,
+                  transition: isLightboxDragging ? 'none' : 'transform 0.15s ease-out',
+                  touchAction: 'none'
+                }}
+                className="max-h-[68vh] w-auto max-w-full object-contain rounded-2xl shadow-2xl border border-slate-800/80 cursor-grab active:cursor-grabbing select-none"
+              />
+            </div>
+
+            {/* Next Button */}
+            {lightboxPhotos.length > 1 && (
+              <button
+                onClick={nextLightboxPhoto}
+                className="absolute right-2 sm:right-6 z-20 p-3 rounded-full bg-slate-900/80 hover:bg-blue-600 text-white transition shadow-xl border border-slate-700/60 hover:scale-110"
+                title="Next Photo (Right Arrow)"
+              >
+                <ChevronRight className="w-6 h-6" />
+              </button>
+            )}
+          </div>
+
+          {/* Lightbox Bottom Thumbnail Strip & Controls Hint */}
+          <div
+            className="w-full max-w-xl mx-auto flex flex-col items-center gap-2 pt-1"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {lightboxPhotos.length > 1 && (
+              <div className="flex items-center justify-center gap-2 overflow-x-auto max-w-full py-1">
+                {lightboxPhotos.map((imgSrc, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      resetLightboxZoom();
+                      setLightboxIndex(idx);
+                    }}
+                    className={`relative w-12 h-12 rounded-xl overflow-hidden border-2 transition flex-shrink-0 ${
+                      lightboxIndex === idx
+                        ? 'border-blue-500 ring-2 ring-blue-400/50 scale-105'
+                        : 'border-slate-800 opacity-60 hover:opacity-100'
+                    }`}
+                  >
+                    <img src={imgSrc} alt={`Thumbnail ${idx + 1}`} className="w-full h-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            )}
+            <p className="text-[11px] text-slate-400 text-center select-none">
+              💡 Scroll mouse to zoom • Drag to pan when zoomed • Double click to zoom in/reset
+            </p>
           </div>
         </div>
       )}

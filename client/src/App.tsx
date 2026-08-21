@@ -4,6 +4,7 @@ import {
   db
 } from './config/firebase';
 import { GoogleAuth } from '@codetrix-studio/capacitor-google-auth';
+import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
@@ -54,7 +55,11 @@ import {
   Compass,
   Smartphone,
   ShieldCheck,
-  Download
+  Download,
+  ZoomIn,
+  ZoomOut,
+  RotateCw,
+  Maximize2
 } from 'lucide-react';
 import { AdminPortalView } from './components/AdminPortalView';
 import { PasskeyModal } from './components/PasskeyModal';
@@ -170,6 +175,49 @@ export function compressImageFile(file: File, maxDimension = 800, quality = 0.6)
   });
 }
 
+/**
+ * Compresses a base64 / dataUrl image (e.g. from native Capacitor Camera).
+ */
+export function compressBase64OrDataUrl(dataUrl: string, maxDimension = 800, quality = 0.6): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        let { width, height } = img;
+        if (width <= 0 || height <= 0) {
+          width = 800;
+          height = 600;
+        }
+        if (width > height) {
+          if (width > maxDimension) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          }
+        } else {
+          if (height > maxDimension) {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return resolve(dataUrl);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      } catch (err: unknown) {
+        const error = err as { message?: string };
+        reject(new Error(error.message || 'Image processing failed.'));
+      }
+    };
+    img.onerror = () => reject(new Error('Failed to load image from camera'));
+    img.src = dataUrl;
+  });
+}
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -189,13 +237,19 @@ export default function App() {
   const [monthlyCapacity, setMonthlyCapacity] = useState('');
   const [address, setAddress] = useState('');
 
-  // Photos State
+  // Photos State (Up to 6 photos)
+  const MAX_PHOTOS = 6;
   const [photos, setPhotos] = useState<string[]>([]);
   const [isCompressing, setIsCompressing] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const [previewModalPhoto, setPreviewModalPhoto] = useState<string | null>(null);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewRotation, setPreviewRotation] = useState(0);
+  const [previewPosition, setPreviewPosition] = useState({ x: 0, y: 0 });
+  const [previewDragging, setPreviewDragging] = useState(false);
+  const [previewDragStart, setPreviewDragStart] = useState({ x: 0, y: 0 });
 
   // Edit Entry State
   const [editingClient, setEditingClient] = useState<ClientRecord | null>(null);
@@ -274,21 +328,61 @@ export default function App() {
     );
   };
 
+  // Take Photo using Native Capacitor Camera for New Intake
+  const handleTakePhoto = async () => {
+    setPhotoError(null);
+    const availableSlots = MAX_PHOTOS - photos.length;
+    if (availableSlots <= 0) {
+      setPhotoError(`Maximum ${MAX_PHOTOS} photos allowed. Please remove a photo to take a new one.`);
+      return;
+    }
+
+    try {
+      const photo = await CapCamera.getPhoto({
+        quality: 85,
+        allowEditing: false,
+        resultType: CameraResultType.DataUrl,
+        source: CameraSource.Camera,
+      });
+
+      if (photo.dataUrl) {
+        setIsCompressing(true);
+        try {
+          const base64 = await compressBase64OrDataUrl(photo.dataUrl, 800, 0.6);
+          setPhotos((prev) => [...prev, base64].slice(0, MAX_PHOTOS));
+        } catch (err: unknown) {
+          const error = err as { message?: string };
+          setPhotoError(error.message || 'Failed to process photo from camera.');
+        } finally {
+          setIsCompressing(false);
+        }
+      }
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      // Ignore user cancellation
+      if (error?.message && (error.message.includes('User cancelled') || error.message.includes('cancelled') || error.message.includes('No image picked'))) {
+        return;
+      }
+      // Fallback to HTML camera file input if plugin is not available
+      cameraInputRef.current?.click();
+    }
+  };
+
   // Handle Photo File Selection & Client-side Canvas Compression for New Intake
   const handlePhotoFiles = async (files: FileList | File[]) => {
     setPhotoError(null);
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
 
-    const availableSlots = 3 - photos.length;
+    const availableSlots = MAX_PHOTOS - photos.length;
     if (availableSlots <= 0) {
-      setPhotoError('Maximum 3 photos allowed. Please remove a photo to upload a new one.');
+      setPhotoError(`Maximum ${MAX_PHOTOS} photos allowed. Please remove a photo to upload a new one.`);
       return;
     }
 
     const filesToProcess = fileArray.slice(0, availableSlots);
     if (fileArray.length > availableSlots) {
-      setPhotoError(`Only ${availableSlots} more photo(s) could be added (limit is 3 photos).`);
+      setPhotoError(`Only ${availableSlots} more photo(s) could be added (limit is ${MAX_PHOTOS} photos).`);
     }
 
     setIsCompressing(true);
@@ -302,7 +396,7 @@ export default function App() {
         const base64 = await compressImageFile(file, 800, 0.6);
         compressedList.push(base64);
       }
-      setPhotos((prev) => [...prev, ...compressedList].slice(0, 3));
+      setPhotos((prev) => [...prev, ...compressedList].slice(0, MAX_PHOTOS));
     } catch (err: unknown) {
       const error = err as { message?: string };
       setPhotoError(error.message || 'Failed to process and compress image. Please try again.');
@@ -316,6 +410,13 @@ export default function App() {
   const handleRemovePhoto = (indexToRemove: number) => {
     setPhotos((prev) => prev.filter((_, idx) => idx !== indexToRemove));
     setPhotoError(null);
+  };
+
+  const openPhotoPreview = (photo: string) => {
+    setPreviewZoom(1);
+    setPreviewRotation(0);
+    setPreviewPosition({ x: 0, y: 0 });
+    setPreviewModalPhoto(photo);
   };
 
   // Start Editing a client record (Only unverified entries are modifiable)
@@ -335,21 +436,59 @@ export default function App() {
     setEditPhotoError(null);
   };
 
+  // Take Photo using Native Capacitor Camera for Edit Modal
+  const handleTakeEditPhoto = async () => {
+    setEditPhotoError(null);
+    const availableSlots = MAX_PHOTOS - editPhotos.length;
+    if (availableSlots <= 0) {
+      setEditPhotoError(`Maximum ${MAX_PHOTOS} photos allowed. Remove a photo to take a new one.`);
+      return;
+    }
+
+    try {
+      const photo = await CapCamera.getPhoto({
+        quality: 85,
+        allowEditing: false,
+        resultType: CameraResultType.DataUrl,
+        source: CameraSource.Camera,
+      });
+
+      if (photo.dataUrl) {
+        setIsEditCompressing(true);
+        try {
+          const base64 = await compressBase64OrDataUrl(photo.dataUrl, 800, 0.6);
+          setEditPhotos((prev) => [...prev, base64].slice(0, MAX_PHOTOS));
+        } catch (err: unknown) {
+          const error = err as { message?: string };
+          setEditPhotoError(error.message || 'Failed to compress photo.');
+        } finally {
+          setIsEditCompressing(false);
+        }
+      }
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      if (error?.message && (error.message.includes('User cancelled') || error.message.includes('cancelled') || error.message.includes('No image picked'))) {
+        return;
+      }
+      editCameraInputRef.current?.click();
+    }
+  };
+
   // Handle Photo upload inside Edit Modal
   const handleEditPhotoFiles = async (files: FileList | File[]) => {
     setEditPhotoError(null);
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
 
-    const availableSlots = 3 - editPhotos.length;
+    const availableSlots = MAX_PHOTOS - editPhotos.length;
     if (availableSlots <= 0) {
-      setEditPhotoError('Maximum 3 photos allowed. Remove a photo to upload a new one.');
+      setEditPhotoError(`Maximum ${MAX_PHOTOS} photos allowed. Remove a photo to upload a new one.`);
       return;
     }
 
     const filesToProcess = fileArray.slice(0, availableSlots);
     if (fileArray.length > availableSlots) {
-      setEditPhotoError(`Only ${availableSlots} more photo(s) added (limit is 3).`);
+      setEditPhotoError(`Only ${availableSlots} more photo(s) added (limit is ${MAX_PHOTOS}).`);
     }
 
     setIsEditCompressing(true);
@@ -362,7 +501,7 @@ export default function App() {
         const base64 = await compressImageFile(file, 800, 0.6);
         compressedList.push(base64);
       }
-      setEditPhotos((prev) => [...prev, ...compressedList].slice(0, 3));
+      setEditPhotos((prev) => [...prev, ...compressedList].slice(0, MAX_PHOTOS));
     } catch (err: unknown) {
       const error = err as { message?: string };
       setEditPhotoError(error.message || 'Failed to compress photo.');
@@ -1168,18 +1307,18 @@ export default function App() {
                 <div className="flex items-center justify-between">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                      Factory / Office Photos <span className="text-slate-400 font-normal normal-case">(Max 3)</span>
+                      Factory / Office Photos <span className="text-slate-400 font-normal normal-case">(Max {MAX_PHOTOS})</span>
                     </label>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                      Capture directly with your phone camera or select from gallery.
+                      Capture directly with your phone camera or select up to {MAX_PHOTOS} from gallery.
                     </p>
                   </div>
                   <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full border ${
-                    photos.length === 3
+                    photos.length === MAX_PHOTOS
                       ? 'bg-amber-50 text-amber-700 border-amber-200'
                       : 'bg-slate-100 text-slate-600 border-slate-200'
                   }`}>
-                    {photos.length} / 3 Photos
+                    {photos.length} / {MAX_PHOTOS} Photos
                   </span>
                 </div>
 
@@ -1239,7 +1378,8 @@ export default function App() {
                           <img
                             src={photoBase64}
                             alt={`Factory/Office preview ${index + 1}`}
-                            className="w-full h-full object-cover group-hover:opacity-90 transition"
+                            className="w-full h-full object-cover group-hover:opacity-90 transition cursor-pointer"
+                            onClick={() => openPhotoPreview(photoBase64)}
                           />
 
                           {/* Photo Badge */}
@@ -1248,19 +1388,19 @@ export default function App() {
                           </span>
 
                           {/* Desktop Hover & Mobile Touch Controls */}
-                          <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 p-2">
+                          <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 p-2 pointer-events-none">
                             <button
                               type="button"
-                              onClick={() => setPreviewModalPhoto(photoBase64)}
-                              className="p-2 rounded-lg bg-white/90 text-slate-800 hover:bg-white hover:text-slate-900 shadow-sm transition"
-                              title="Preview full size"
+                              onClick={() => openPhotoPreview(photoBase64)}
+                              className="p-2 rounded-lg bg-white/90 text-slate-800 hover:bg-white hover:text-slate-900 shadow-sm transition pointer-events-auto"
+                              title="Preview & zoom"
                             >
                               <Eye className="w-4 h-4" />
                             </button>
                             <button
                               type="button"
                               onClick={() => handleRemovePhoto(index)}
-                              className="p-2 rounded-lg bg-rose-600 text-white hover:bg-rose-700 shadow-sm transition"
+                              className="p-2 rounded-lg bg-rose-600 text-white hover:bg-rose-700 shadow-sm transition pointer-events-auto"
                               title="Remove photo"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -1271,7 +1411,7 @@ export default function App() {
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); handleRemovePhoto(index); }}
-                            className="absolute top-2 right-2 p-1.5 rounded-full bg-slate-900/80 hover:bg-rose-600 text-white shadow-md transition"
+                            className="absolute top-2 right-2 p-1.5 rounded-full bg-slate-900/80 hover:bg-rose-600 text-white shadow-md transition z-10"
                             title="Remove photo"
                           >
                             <X className="w-3.5 h-3.5" />
@@ -1281,13 +1421,13 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* Big Mobile Action Buttons for Camera & Gallery (if < 3 photos) */}
-                  {photos.length < 3 && (
+                  {/* Big Mobile Action Buttons for Camera & Gallery (if < MAX_PHOTOS) */}
+                  {photos.length < MAX_PHOTOS && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                       {/* Take Photo with Camera */}
                       <button
                         type="button"
-                        onClick={() => cameraInputRef.current?.click()}
+                        onClick={handleTakePhoto}
                         className="py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white font-bold text-sm shadow-md shadow-indigo-500/20 transition flex items-center justify-center gap-2.5"
                       >
                         <Camera className="w-5 h-5" />
@@ -1591,7 +1731,7 @@ export default function App() {
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
                     <Camera className="w-3.5 h-3.5 text-indigo-600" />
-                    Photos ({editPhotos.length}/3)
+                    Photos ({editPhotos.length}/{MAX_PHOTOS})
                   </span>
                   <div className="flex items-center gap-2">
                     <input
@@ -1610,7 +1750,7 @@ export default function App() {
                       onChange={(e) => e.target.files && handleEditPhotoFiles(e.target.files)}
                       className="hidden"
                     />
-                    {editPhotos.length < 3 && (
+                    {editPhotos.length < MAX_PHOTOS && (
                       <>
                         <button
                           type="button"
@@ -1622,7 +1762,7 @@ export default function App() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => editCameraInputRef.current?.click()}
+                          onClick={handleTakeEditPhoto}
                           className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold flex items-center gap-1 transition"
                         >
                           <Camera className="w-3 h-3" />
@@ -1650,17 +1790,18 @@ export default function App() {
                 )}
 
                 {/* Edit Photo Thumbnails Grid */}
-                <div className="grid grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2.5">
                   {editPhotos.map((photo, pIdx) => (
                     <div
                       key={pIdx}
-                      className="relative group rounded-xl overflow-hidden border border-slate-200 bg-slate-900 aspect-square shadow-xs"
+                      className="relative group rounded-xl overflow-hidden border border-slate-200 bg-slate-900 aspect-square shadow-xs cursor-pointer"
+                      onClick={() => openPhotoPreview(photo)}
                     >
                       <img src={photo} alt={`Photo ${pIdx + 1}`} className="w-full h-full object-cover" />
                       <button
                         type="button"
-                        onClick={() => handleRemoveEditPhoto(pIdx)}
-                        className="absolute top-1.5 right-1.5 p-1 rounded-full bg-slate-900/80 hover:bg-rose-600 text-white transition shadow-sm"
+                        onClick={(e) => { e.stopPropagation(); handleRemoveEditPhoto(pIdx); }}
+                        className="absolute top-1.5 right-1.5 p-1 rounded-full bg-slate-900/80 hover:bg-rose-600 text-white transition shadow-sm z-10"
                         title="Remove photo"
                       >
                         <X className="w-3.5 h-3.5" />
@@ -1671,7 +1812,7 @@ export default function App() {
                     </div>
                   ))}
                   {editPhotos.length === 0 && (
-                    <div className="col-span-3 p-4 rounded-xl border border-dashed border-slate-200 text-center text-xs text-slate-400">
+                    <div className="col-span-3 sm:col-span-6 p-4 rounded-xl border border-dashed border-slate-200 text-center text-xs text-slate-400">
                       No photos attached. Click "Add Photo" above to attach factory/office pictures.
                     </div>
                   )}
@@ -1751,34 +1892,141 @@ export default function App() {
         </div>
       )}
 
-      {/* Photo Preview Modal */}
+      {/* Photo Preview Modal with Zoom & Pan */}
       {previewModalPhoto && (
         <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 select-none animate-in fade-in duration-200"
           onClick={() => setPreviewModalPhoto(null)}
         >
           <div
-            className="relative max-w-2xl w-full bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-slate-800 animate-in fade-in zoom-in-95 duration-200"
+            className="relative max-w-3xl w-full bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-slate-800 flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="p-4 flex items-center justify-between border-b border-slate-800 text-white">
+            {/* Preview Header & Controls */}
+            <div className="p-3 sm:p-4 flex items-center justify-between border-b border-slate-800 text-white bg-slate-950/60">
               <div className="flex items-center gap-2">
                 <ImageIcon className="w-4 h-4 text-indigo-400" />
-                <span className="text-xs font-semibold uppercase tracking-wider">Photo Preview</span>
+                <span className="text-xs font-bold uppercase tracking-wider">Photo Inspection</span>
               </div>
+
+              {/* Zoom & Rotation Toolbar */}
+              <div className="flex items-center gap-1 sm:gap-1.5 bg-slate-800/90 px-2 py-1 rounded-xl border border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => setPreviewZoom((prev) => {
+                    const next = Math.max(prev - 0.5, 1);
+                    if (next === 1) setPreviewPosition({ x: 0, y: 0 });
+                    return next;
+                  })}
+                  disabled={previewZoom <= 1}
+                  className="p-1 rounded-lg hover:bg-white/10 disabled:opacity-30 text-slate-300 hover:text-white transition"
+                  title="Zoom Out (-)"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => { setPreviewZoom(1); setPreviewPosition({ x: 0, y: 0 }); setPreviewRotation(0); }}
+                  className="px-1.5 py-0.5 text-xs font-mono font-bold text-indigo-300 hover:bg-white/10 rounded transition"
+                  title="Click to reset zoom"
+                >
+                  {Math.round(previewZoom * 100)}%
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPreviewZoom((prev) => Math.min(prev + 0.5, 4))}
+                  disabled={previewZoom >= 4}
+                  className="p-1 rounded-lg hover:bg-white/10 disabled:opacity-30 text-slate-300 hover:text-white transition"
+                  title="Zoom In (+)"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+
+                <div className="w-px h-3.5 bg-slate-700 mx-0.5" />
+
+                <button
+                  type="button"
+                  onClick={() => setPreviewRotation((prev) => (prev + 90) % 360)}
+                  className="p-1 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white transition"
+                  title="Rotate 90°"
+                >
+                  <RotateCw className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => { setPreviewZoom(1); setPreviewPosition({ x: 0, y: 0 }); setPreviewRotation(0); }}
+                  className="p-1 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white transition"
+                  title="Reset Fit"
+                >
+                  <Maximize2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
               <button
                 onClick={() => setPreviewModalPhoto(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+                title="Close"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-4 flex items-center justify-center bg-black/40 min-h-[300px] max-h-[70vh] overflow-auto">
+
+            {/* Interactive Image Viewport */}
+            <div
+              className="p-4 flex items-center justify-center bg-black/60 min-h-[350px] max-h-[70vh] h-[55vh] overflow-hidden relative cursor-grab active:cursor-grabbing"
+              onWheel={(e) => {
+                e.stopPropagation();
+                if (e.deltaY < 0) {
+                  setPreviewZoom((prev) => Math.min(prev + 0.25, 4));
+                } else {
+                  setPreviewZoom((prev) => {
+                    const next = Math.max(prev - 0.25, 1);
+                    if (next === 1) setPreviewPosition({ x: 0, y: 0 });
+                    return next;
+                  });
+                }
+              }}
+              onMouseDown={(e) => {
+                if (previewZoom > 1) {
+                  setPreviewDragging(true);
+                  setPreviewDragStart({ x: e.clientX - previewPosition.x, y: e.clientY - previewPosition.y });
+                }
+              }}
+              onMouseMove={(e) => {
+                if (previewDragging && previewZoom > 1) {
+                  setPreviewPosition({ x: e.clientX - previewDragStart.x, y: e.clientY - previewDragStart.y });
+                }
+              }}
+              onMouseUp={() => setPreviewDragging(false)}
+              onMouseLeave={() => setPreviewDragging(false)}
+              onDoubleClick={() => {
+                if (previewZoom > 1) {
+                  setPreviewZoom(1);
+                  setPreviewPosition({ x: 0, y: 0 });
+                } else {
+                  setPreviewZoom(2.5);
+                }
+              }}
+            >
               <img
                 src={previewModalPhoto}
                 alt="Full Preview"
-                className="max-h-[65vh] w-auto max-w-full object-contain rounded-lg"
+                draggable={false}
+                style={{
+                  transform: `translate(${previewPosition.x}px, ${previewPosition.y}px) scale(${previewZoom}) rotate(${previewRotation}deg)`,
+                  transition: previewDragging ? 'none' : 'transform 0.15s ease-out',
+                  touchAction: 'none'
+                }}
+                className="max-h-[50vh] w-auto max-w-full object-contain rounded-lg shadow-2xl select-none pointer-events-auto"
               />
+            </div>
+
+            {/* Hint Footer */}
+            <div className="px-4 py-2 bg-slate-950/80 border-t border-slate-800/80 text-[11px] text-slate-400 text-center">
+              💡 Scroll mouse or click Zoom In/Out • Drag to pan • Double click to zoom in/reset
             </div>
           </div>
         </div>
