@@ -32,13 +32,13 @@ jobs:
       - name: Build Web Application
         run: |
           cd client
-          npm install
+          npm install --legacy-peer-deps
           npm run build
 
       - name: Setup Capacitor and Sync Android
         run: |
           cd client
-          npm install @capacitor/core @capacitor/cli @capacitor/android
+          npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
           npx cap init "Field Tracker" "com.fieldtracker.app" --web-dir dist || true
           [ -d "android" ] || npx cap add android || true
           npx cap sync android

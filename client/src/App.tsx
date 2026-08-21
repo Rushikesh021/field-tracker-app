@@ -3,13 +3,14 @@ import {
   auth,
   db
 } from './config/firebase';
+import { GoogleAuth } from '@codetrix-studio/capacitor-google-auth';
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
   GoogleAuthProvider,
-  signInWithPopup
+  signInWithCredential
 } from 'firebase/auth';
 import type { User } from 'firebase/auth';
 import {
@@ -52,7 +53,6 @@ import {
   Lock,
   Compass,
   Smartphone,
-  Wifi,
   ShieldCheck,
   Download
 } from 'lucide-react';
@@ -450,6 +450,11 @@ export default function App() {
     }
   };
 
+  // Initialize Capacitor Native Google Auth
+  useEffect(() => {
+    GoogleAuth.initialize();
+  }, []);
+
   // Listen to Auth State
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -574,21 +579,15 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [contactNumber, checkDuplicatePhone]);
 
-  // Google OAuth Sign In / Registration Handler
+  // Native Google OAuth Sign In / Registration Handler
   const handleGoogleSignIn = async () => {
-    setAuthError(null);
-    setAuthSubmitting(true);
     try {
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
-      await signInWithPopup(auth, provider);
-    } catch (err: unknown) {
-      const error = err as { code?: string; message?: string };
-      if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
-        setAuthError(error.message || 'Google sign-in failed. Please try again with a valid Google account.');
-      }
-    } finally {
-      setAuthSubmitting(false);
+      const userResponse = await GoogleAuth.signIn();
+      const credential = GoogleAuthProvider.credential(userResponse.authentication.idToken);
+      await signInWithCredential(auth, credential);
+    } catch (err: any) {
+      console.error("Google sign-in error:", err);
+      alert("Google sign-in failed: " + (err.message || err));
     }
   };
 
@@ -752,30 +751,9 @@ export default function App() {
           <p className="mt-2 text-sm text-slate-400">
             Enterprise Client Onboarding & Registration Portal
           </p>
-
-          {/* Mobile Phone Access Guidance Badge */}
-          <div className="mt-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-indigo-900/60 border border-indigo-500/30 text-indigo-200 text-xs shadow-inner">
-            <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Mobile Ready (iOS Safari & Android Chrome)</span>
-          </div>
         </div>
 
         <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md">
-          {/* Wi-Fi Local Network Access URL Card */}
-          <div className="mb-4 rounded-2xl bg-indigo-950/80 border border-indigo-500/40 p-3.5 text-xs text-indigo-200 flex items-start gap-2.5 shadow-lg backdrop-blur-sm">
-            <Wifi className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <div className="font-bold text-white flex items-center gap-1.5">
-                <span>Open on your Mobile Phone:</span>
-              </div>
-              <p className="text-indigo-300 mt-0.5 leading-relaxed">
-                Connect your phone to the same Wi-Fi & open:{' '}
-                <span className="font-mono text-emerald-300 font-bold select-all bg-indigo-900/80 px-1.5 py-0.5 rounded border border-indigo-700">
-                  http://192.168.2.118:5173
-                </span>
-              </p>
-            </div>
-          </div>
           <div className="bg-white py-8 px-6 shadow-2xl rounded-2xl sm:px-10 border border-slate-100">
             {/* Google One-Click Sign In Button */}
             <button
