@@ -14,10 +14,10 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 18
+      - name: Setup Node.js (LTS)
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
           cache-dependency-path: client/package-lock.json
 
       - name: Setup Java JDK 17 (Zulu)
