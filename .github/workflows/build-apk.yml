@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android APK - TEXHUB Innovations
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-apk:
-    name: Generate Android APK
+    name: Test & Generate Android APK
     runs-on: ubuntu-latest
 
     steps:
@@ -29,18 +29,24 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Build Web Application
+      - name: Install Client Dependencies
         run: |
           cd client
-          npm install --legacy-peer-deps
+          npm ci || npm install --legacy-peer-deps
+
+      - name: Run Automated Test Suites
+        run: |
+          cd client
+          npm test
+
+      - name: Build Web Application Bundle
+        run: |
+          cd client
           npm run build
 
-      - name: Setup Capacitor and Sync Android
+      - name: Sync Capacitor Android Platform
         run: |
           cd client
-          npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
-          npx cap init "Field Tracker" "com.fieldtracker.app" --web-dir dist || true
-          [ -d "android" ] || npx cap add android || true
           npx cap sync android
 
       - name: Compile Android Debug APK
@@ -52,6 +58,6 @@ jobs:
       - name: Upload Compiled APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FieldTracker-App
+          name: TEXHUB-Innovations-Debug-APK
           path: client/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
