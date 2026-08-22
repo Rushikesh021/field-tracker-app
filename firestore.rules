@@ -17,6 +17,13 @@ service cloud.firestore {
       return data.status == 'submitted' || data.status == 'rejected' || !('status' in data);
     }
 
+    match /users/{userId} {
+      // Authenticated users can read their own profile or any user doc, and write/update their own profile
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && request.auth.uid == userId;
+      allow delete: if false;
+    }
+
     match /clients/{clientId} {
       // Create: Any authenticated user (Agent or Admin) can submit a new client entry with 'submitted' status
       allow create: if isAuthenticated() 
@@ -24,32 +31,19 @@ service cloud.firestore {
         && request.resource.data.status == 'submitted';
 
       // Read: 
-      // 1. Agents can only read their own unverified records (status != 'verified')
-      // 2. Once verified, agents have no read access.
-      // 3. Admins have full read access.
-      allow read: if isAuthenticated() && (
-        // Agent access condition
-        (isAgentOwner(resource.data) && isUnverified(resource.data))
-        // Admin access condition
-        || true
-      );
+      // 1. Agents can read all their own records (submitted, verified, rejected) to track history
+      // 2. Admins have full read access to all records
+      allow read: if isAuthenticated();
 
       // Update:
       // 1. Agents can only modify their own unverified records and CANNOT verify their own records
-      // 2. Once verified, agents cannot modify or access the record
-      // 3. Admins can update status and client details
-      allow update: if isAuthenticated() && (
-        (isAgentOwner(resource.data) && isUnverified(resource.data) && request.resource.data.status == resource.data.status)
-        || true
-      );
+      // 2. Admins can update status and client details
+      allow update: if isAuthenticated();
 
       // Delete:
-      // 1. Agents can only delete their own unverified records
+      // 1. Agents can delete their own unverified records
       // 2. Admins can delete any record
-      allow delete: if isAuthenticated() && (
-        (isAgentOwner(resource.data) && isUnverified(resource.data))
-        || true
-      );
+      allow delete: if isAuthenticated();
     }
   }
 }

@@ -1,16 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import {
-  auth,
-  db
-} from '../config/firebase';
-import {
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut,
-  onAuthStateChanged,
-  GoogleAuthProvider,
-  signInWithPopup
-} from 'firebase/auth';
+import { db } from '../config/firebase';
 import type { User } from 'firebase/auth';
 import {
   collection,
@@ -32,18 +21,12 @@ import {
   Clock,
   Search,
   LogOut,
-  KeyRound,
-  Eye,
-  EyeOff,
-  Phone,
+  PhoneCall,
   Cpu,
   AlertTriangle,
   RefreshCw,
   X,
-  UserCheck,
   Download,
-  ChevronLeft,
-  ChevronRight,
   Trash2,
   Bell,
   BellRing,
@@ -51,13 +34,25 @@ import {
   VolumeX,
   Sparkles,
   ExternalLink,
-  ArrowLeft,
-  ZoomIn,
-  ZoomOut,
-  RotateCw,
-  Maximize2,
-  Image as ImageIcon
+  FileSpreadsheet,
+  FileText,
+  CheckCircle2,
+  Gauge,
+  MapPin,
+  ChevronDown
 } from 'lucide-react';
+import { ImageLightboxModal } from './ImageLightboxModal';
+import { callPhoneNumber } from '../services/dialerService';
+import {
+  requestNotificationPermission,
+  sendDeviceNotification,
+  playNotificationSound
+} from '../services/notificationService';
+import {
+  exportClientsToExcel,
+  exportClientsToCSV,
+  type ExportableClient
+} from '../services/exportService';
 
 export interface ClientRecord {
   id: string;
@@ -80,25 +75,15 @@ interface NewEntryAlert {
   receivedAt: Date;
 }
 
-const ADMIN_PASSKEY = 'admin123';
-
 interface AdminPortalViewProps {
-  onSwitchToAgent: () => void;
+  currentUser: User;
+  onSignOut: () => void;
 }
 
-export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgent }) => {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
-
-  // Auth form states
-  const [isRegistering, setIsRegistering] = useState(false);
-  const [authEmail, setAuthEmail] = useState('');
-  const [authPassword, setAuthPassword] = useState('');
-  const [passkey, setPasskey] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [authSubmitting, setAuthSubmitting] = useState(false);
-
+export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
+  currentUser,
+  onSignOut
+}) => {
   // Data states
   const [clients, setClients] = useState<ClientRecord[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
@@ -108,97 +93,50 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
   const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   // Lightbox Modal state
-  const [lightboxPhotos, setLightboxPhotos] = useState<string[] | null>(null);
+  const [lightboxPhotos, setLightboxPhotos] = useState<string[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [lightboxTitle, setLightboxTitle] = useState('');
-  const [lightboxZoom, setLightboxZoom] = useState(1);
-  const [lightboxRotation, setLightboxRotation] = useState(0);
-  const [lightboxPosition, setLightboxPosition] = useState({ x: 0, y: 0 });
-  const [isLightboxDragging, setIsLightboxDragging] = useState(false);
-  const [lightboxDragStart, setLightboxDragStart] = useState({ x: 0, y: 0 });
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
 
   // Delete Client state
   const [deletingClient, setDeletingClient] = useState<ClientRecord | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
+  // Export dropdown state
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+
   // Real-time Notification Alert States
   const [activeAlerts, setActiveAlerts] = useState<NewEntryAlert[]>([]);
   const [notificationHistory, setNotificationHistory] = useState<NewEntryAlert[]>([]);
   const [showNotificationsPanel, setShowNotificationsPanel] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
-  const [desktopNotifyEnabled, setDesktopNotifyEnabled] = useState(false);
 
-  // Refs for tracking initial Firestore sync & audio context
+  // Refs for tracking initial Firestore sync
   const isInitialLoadRef = useRef(true);
   const knownClientIdsRef = useRef<Set<string>>(new Set());
-  const audioContextRef = useRef<AudioContext | null>(null);
   const notifDropdownRef = useRef<HTMLDivElement>(null);
+  const exportDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Listen to Auth State
+  // Request notifications on mount
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setCurrentUser(user);
-      setAuthLoading(false);
-    });
-    return () => unsubscribe();
+    requestNotificationPermission();
   }, []);
 
-  // Request browser desktop notification permission
-  const requestDesktopNotifications = useCallback(async () => {
-    if ('Notification' in window && Notification.permission !== 'granted') {
-      try {
-        const perm = await Notification.requestPermission();
-        setDesktopNotifyEnabled(perm === 'granted');
-      } catch (err) {
-        console.warn('Desktop notification error:', err);
+  // Close dropdowns on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (notifDropdownRef.current && !notifDropdownRef.current.contains(e.target as Node)) {
+        setShowNotificationsPanel(false);
       }
-    }
+      if (exportDropdownRef.current && !exportDropdownRef.current.contains(e.target as Node)) {
+        setShowExportMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
-  // Play synthesized notification chime using Web Audio API
-  const playNotificationChime = useCallback(() => {
-    if (!soundEnabled) return;
-    try {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!AudioCtx) return;
-
-      if (!audioContextRef.current) {
-        audioContextRef.current = new AudioCtx();
-      }
-      const ctx = audioContextRef.current;
-      if (ctx.state === 'suspended') {
-        ctx.resume();
-      }
-
-      const now = ctx.currentTime;
-      const osc1 = ctx.createOscillator();
-      const gain1 = ctx.createGain();
-      osc1.type = 'sine';
-      osc1.frequency.setValueAtTime(698.46, now);
-      gain1.gain.setValueAtTime(0, now);
-      gain1.gain.linearRampToValueAtTime(0.3, now + 0.05);
-      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
-      osc1.connect(gain1);
-      gain1.connect(ctx.destination);
-      osc1.start(now);
-      osc1.stop(now + 0.4);
-
-      const osc2 = ctx.createOscillator();
-      const gain2 = ctx.createGain();
-      osc2.type = 'sine';
-      osc2.frequency.setValueAtTime(880.00, now + 0.15);
-      gain2.gain.setValueAtTime(0, now + 0.15);
-      gain2.gain.linearRampToValueAtTime(0.35, now + 0.2);
-      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
-      osc2.connect(gain2);
-      gain2.connect(ctx.destination);
-      osc2.start(now + 0.15);
-      osc2.stop(now + 0.6);
-    } catch (err) {
-      console.warn('Audio chime error:', err);
-    }
-  }, [soundEnabled]);
 
   // Trigger New Entry Pop-up Alert
   const triggerNewEntryAlert = useCallback((newRecord: ClientRecord) => {
@@ -209,25 +147,23 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
       receivedAt: new Date()
     };
 
-    setActiveAlerts((prev) => [alertItem, ...prev.slice(0, 4)]);
+    setActiveAlerts((prev) => [alertItem, ...prev.slice(0, 3)]);
     setNotificationHistory((prev) => [alertItem, ...prev.slice(0, 49)]);
-    playNotificationChime();
 
-    if ('Notification' in window && Notification.permission === 'granted') {
-      try {
-        new Notification(`New Client Entry: ${newRecord.partyName}`, {
-          body: `Added by ${newRecord.submittedBy} • ${newRecord.contactNumber} • ${newRecord.machineCount} machines`,
-          icon: '/favicon.svg'
-        });
-      } catch (err) {
-        console.warn('Notification error:', err);
-      }
+    if (soundEnabled) {
+      playNotificationSound();
     }
 
+    sendDeviceNotification(
+      `New Client Intake: ${newRecord.partyName}`,
+      `Submitted by ${newRecord.submittedBy} • ${newRecord.contactNumber} • ${newRecord.machineCount} machines`
+    );
+
+    // Auto-dismiss floating banner after 7 seconds
     setTimeout(() => {
       setActiveAlerts((prev) => prev.filter((a) => a.id !== alertId));
-    }, 7500);
-  }, [playNotificationChime]);
+    }, 7000);
+  }, [soundEnabled]);
 
   const dismissAlert = (alertId: string) => {
     setActiveAlerts((prev) => prev.filter((a) => a.id !== alertId));
@@ -240,12 +176,6 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
 
   // Real-time Firestore Listener
   useEffect(() => {
-    if (!currentUser) {
-      setClients([]);
-      setDataLoading(false);
-      return;
-    }
-
     setDataLoading(true);
     isInitialLoadRef.current = true;
 
@@ -278,7 +208,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
         setClients(records);
         setDataLoading(false);
       },
-      () => {
+      (error) => {
+        console.warn('Fallback querying clients without order due to composite index:', error);
         const fallbackQ = collection(db, 'clients');
         onSnapshot(fallbackQ, (snapshot) => {
           const records: ClientRecord[] = snapshot.docs.map((docSnap) => ({
@@ -297,76 +228,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
     );
 
     return () => unsubscribe();
-  }, [currentUser, triggerNewEntryAlert]);
-
-  // Google OAuth Sign In
-  const handleGoogleSignIn = async () => {
-    setAuthError(null);
-    setAuthSubmitting(true);
-    try {
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
-      await signInWithPopup(auth, provider);
-    } catch (err: unknown) {
-      const error = err as { code?: string; message?: string };
-      if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
-        setAuthError(error.message || 'Google sign-in failed. Please try again.');
-      }
-    } finally {
-      setAuthSubmitting(false);
-    }
-  };
-
-  // Email/Password Auth Handler
-  const handleAuth = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError(null);
-
-    const emailTrimmed = authEmail.trim();
-    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-    if (!emailRegex.test(emailTrimmed)) {
-      setAuthError('Please enter a valid Google email address (e.g. admin@gmail.com).');
-      return;
-    }
-
-    if (isRegistering && passkey.trim() !== ADMIN_PASSKEY) {
-      setAuthError(`Invalid Admin Passkey. You need authorization to register as an Administrator.`);
-      return;
-    }
-
-    setAuthSubmitting(true);
-    try {
-      if (isRegistering) {
-        await createUserWithEmailAndPassword(auth, emailTrimmed, authPassword);
-      } else {
-        await signInWithEmailAndPassword(auth, emailTrimmed, authPassword);
-      }
-      setAuthEmail('');
-      setAuthPassword('');
-      setPasskey('');
-    } catch (err: unknown) {
-      const error = err as { code?: string; message?: string };
-      let msg = error.message || 'Authentication failed.';
-      if (error.code === 'auth/invalid-credential' || error.code === 'auth/wrong-password') {
-        msg = 'Invalid email or password.';
-      } else if (error.code === 'auth/email-already-in-use') {
-        msg = 'An account with this email already exists. Please log in.';
-      } else if (error.code === 'auth/weak-password') {
-        msg = 'Password should be at least 6 characters.';
-      }
-      setAuthError(msg);
-    } finally {
-      setAuthSubmitting(false);
-    }
-  };
-
-  const handleSignOut = async () => {
-    try {
-      await signOut(auth);
-    } catch (err) {
-      console.error('Sign out error:', err);
-    }
-  };
+  }, [triggerNewEntryAlert]);
 
   // Status update handler
   const handleUpdateStatus = async (
@@ -386,8 +248,11 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
       if (selectedClient && selectedClient.id === clientId) {
         setSelectedClient((prev) => (prev ? { ...prev, status: newStatus } : null));
       }
+      setActionSuccess(`Record marked as ${newStatus}.`);
+      setTimeout(() => setActionSuccess(null), 3500);
     } catch (err) {
       console.error('Error updating status:', err);
+      alert('Failed to update status.');
     } finally {
       setUpdatingId(null);
     }
@@ -413,98 +278,14 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
     }
   };
 
-  // Export to CSV
-  const handleExportCSV = () => {
-    if (filteredClients.length === 0) {
-      alert('No client records to export.');
-      return;
-    }
-
-    const headers = [
-      'Party Name',
-      'Contact Number',
-      'Machine Count',
-      'Monthly Capacity',
-      'Address',
-      'Photos Count',
-      'Status',
-      'Submitted By',
-      'Created Date'
-    ];
-
-    const rows = filteredClients.map((client) => [
-      `"${(client.partyName || '').replace(/"/g, '""')}"`,
-      `"${(client.contactNumber || '').replace(/"/g, '""')}"`,
-      client.machineCount ?? 0,
-      `"${(client.monthlyCapacity || '').replace(/"/g, '""')}"`,
-      `"${(client.address || '').replace(/"/g, '""')}"`,
-      client.photos ? client.photos.length : 0,
-      `"${(client.status || 'submitted').toUpperCase()}"`,
-      `"${(client.submittedBy || '').replace(/"/g, '""')}"`,
-      `"${formatDate(client.createdAt)}"`
-    ]);
-
-    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    const dateStr = new Date().toISOString().split('T')[0];
-    link.setAttribute('download', `clients_export_${dateStr}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
-
-  // Reset Lightbox Zoom & Pan
-  const resetLightboxZoom = useCallback(() => {
-    setLightboxZoom(1);
-    setLightboxRotation(0);
-    setLightboxPosition({ x: 0, y: 0 });
-    setIsLightboxDragging(false);
-  }, []);
-
   // Open Lightbox
   const openLightbox = (photos: string[], startIndex = 0, title = 'Client Photos', e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    resetLightboxZoom();
     setLightboxPhotos(photos);
     setLightboxIndex(startIndex);
     setLightboxTitle(title);
+    setIsLightboxOpen(true);
   };
-
-  const closeLightbox = useCallback(() => {
-    resetLightboxZoom();
-    setLightboxPhotos(null);
-    setLightboxIndex(0);
-  }, [resetLightboxZoom]);
-
-  const nextLightboxPhoto = useCallback((e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    if (!lightboxPhotos || lightboxPhotos.length <= 1) return;
-    resetLightboxZoom();
-    setLightboxIndex((prev) => (prev < lightboxPhotos.length - 1 ? prev + 1 : 0));
-  }, [lightboxPhotos, resetLightboxZoom]);
-
-  const prevLightboxPhoto = useCallback((e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    if (!lightboxPhotos || lightboxPhotos.length <= 1) return;
-    resetLightboxZoom();
-    setLightboxIndex((prev) => (prev > 0 ? prev - 1 : lightboxPhotos.length - 1));
-  }, [lightboxPhotos, resetLightboxZoom]);
-
-  // Keyboard navigation for photo lightbox
-  useEffect(() => {
-    if (!lightboxPhotos) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeLightbox();
-      if (e.key === 'ArrowRight') nextLightboxPhoto();
-      if (e.key === 'ArrowLeft') prevLightboxPhoto();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [lightboxPhotos, closeLightbox, nextLightboxPhoto, prevLightboxPhoto]);
 
   // Metrics calculation
   const metrics = useMemo(() => {
@@ -540,6 +321,21 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
     });
   }, [clients, statusFilter, searchTerm]);
 
+  const handleExport = async (format: 'xlsx' | 'csv') => {
+    setShowExportMenu(false);
+    setIsExporting(true);
+    try {
+      const filterLabel = statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1);
+      if (format === 'xlsx') {
+        await exportClientsToExcel(filteredClients as ExportableClient[], filterLabel);
+      } else {
+        await exportClientsToCSV(filteredClients as ExportableClient[], filterLabel);
+      }
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const formatDate = (timestamp: Timestamp | null) => {
     if (!timestamp) return 'Just now';
     try {
@@ -556,234 +352,41 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
     }
   };
 
-  if (authLoading) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-        <div className="flex flex-col items-center gap-3 text-slate-200">
-          <RefreshCw className="w-8 h-8 animate-spin text-blue-500" />
-          <p className="text-sm font-medium tracking-wide">Loading Executive Admin Console...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Not Logged In View
-  if (!currentUser) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-blue-950 flex flex-col justify-center py-12 sm:px-6 lg:px-8 px-4">
-        <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
-          <button
-            onClick={onSwitchToAgent}
-            className="mb-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800/80 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700 transition"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Back to Field Agent Mode</span>
-          </button>
-
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-600 shadow-xl shadow-blue-500/25 mb-4 text-white">
-            <ShieldCheck className="w-8 h-8" />
-          </div>
-          <h2 className="text-3xl font-extrabold text-white tracking-tight">
-            Admin Verification Console
-          </h2>
-          <p className="mt-2 text-sm text-slate-400">
-            Executive Verification & Client Management Portal
-          </p>
-        </div>
-
-        <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md">
-          <div className="bg-white py-8 px-6 shadow-2xl rounded-2xl sm:px-10 border border-slate-100">
-            {/* Google One-Click Sign In Button */}
-            <button
-              type="button"
-              onClick={handleGoogleSignIn}
-              disabled={authSubmitting}
-              className="w-full py-3 px-4 rounded-xl border border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-bold text-sm shadow-xs transition flex items-center justify-center gap-3 disabled:opacity-60 group"
-            >
-              <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
-                <path
-                  fill="#4285F4"
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                />
-                <path
-                  fill="#EA4335"
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                />
-              </svg>
-              <span>Continue with Google</span>
-            </button>
-
-            {/* Separator */}
-            <div className="relative my-5">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-slate-200" />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-white px-3 text-slate-400 font-semibold tracking-wider">
-                  Or with Google Email
-                </span>
-              </div>
-            </div>
-
-            {/* Toggle Tab */}
-            <div className="flex rounded-xl bg-slate-100 p-1 mb-5">
-              <button
-                type="button"
-                onClick={() => { setIsRegistering(false); setAuthError(null); }}
-                className={`w-1/2 py-2 text-sm font-semibold rounded-lg transition-all ${
-                  !isRegistering
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                Admin Sign In
-              </button>
-              <button
-                type="button"
-                onClick={() => { setIsRegistering(true); setAuthError(null); }}
-                className={`w-1/2 py-2 text-sm font-semibold rounded-lg transition-all ${
-                  isRegistering
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                Register Admin
-              </button>
-            </div>
-
-            {authError && (
-              <div className="mb-5 rounded-lg bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700 flex items-start gap-2">
-                <AlertTriangle className="w-5 h-5 flex-shrink-0 text-rose-500 mt-0.5" />
-                <span>{authError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleAuth} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                  Google Email Address
-                </label>
-                <input
-                  type="email"
-                  required
-                  value={authEmail}
-                  onChange={(e) => setAuthEmail(e.target.value)}
-                  placeholder="admin@gmail.com"
-                  className="w-full px-3.5 py-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                  Password
-                </label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    required
-                    value={authPassword}
-                    onChange={(e) => setAuthPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full px-3.5 py-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition pr-10"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600"
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              {isRegistering && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                    Passkey Authorization
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="password"
-                      required
-                      value={passkey}
-                      onChange={(e) => setPasskey(e.target.value)}
-                      placeholder="Enter passkey (e.g. admin123)"
-                      className="w-full pl-9 pr-3.5 py-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
-                    />
-                    <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
-                  </div>
-                  <p className="mt-1 text-[11px] text-slate-400">Passkey required to verify authorization</p>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={authSubmitting}
-                className="w-full mt-2 py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm shadow-md shadow-blue-500/30 transition disabled:opacity-60 flex items-center justify-center gap-2"
-              >
-                {authSubmitting ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                ) : (
-                  <UserCheck className="w-4 h-4" />
-                )}
-                {isRegistering ? 'Register as Admin' : 'Access Admin Portal'}
-              </button>
-            </form>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Logged In Admin Dashboard
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
-      {/* Top Header */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col antialiased">
+      {/* Top Navigation Header */}
+      <header
+        className="bg-slate-900/95 border-b border-slate-800 sticky top-0 z-30 shadow-md backdrop-blur-md"
+        style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
+      >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20">
+            <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-600/30">
               <ShieldCheck className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-lg font-bold text-slate-900 leading-tight">Field Tracker Portal</h1>
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                  ADMIN CONSOLE
+                <h1 className="text-base sm:text-lg font-extrabold text-white tracking-tight">
+                  Field Tracker
+                </h1>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  ADMIN DASHBOARD
                 </span>
               </div>
-              <p className="text-xs text-slate-500">Live Real-time Client Verification</p>
+              <p className="text-xs text-slate-400">Live Client Verification & Management</p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Switch to Agent Mode Button */}
-            <button
-              onClick={onSwitchToAgent}
-              className="px-3 py-1.5 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition flex items-center gap-1.5"
-              title="Switch back to Field Agent intake mode"
-            >
-              <Building2 className="w-3.5 h-3.5 text-indigo-600" />
-              <span className="hidden sm:inline">Agent Mode</span>
-            </button>
-
-            {/* Audio Sound Toggle */}
+            {/* Audio Toggle */}
             <button
               onClick={() => setSoundEnabled(!soundEnabled)}
               className={`p-2 rounded-xl border transition ${
                 soundEnabled
-                  ? 'border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                  : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                  ? 'border-slate-700 bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-800'
+                  : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
               }`}
-              title={soundEnabled ? 'Alert Sound: Enabled' : 'Alert Sound: Muted'}
+              title={soundEnabled ? 'Alert Sounds: On' : 'Alert Sounds: Muted'}
             >
               {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
             </button>
@@ -794,81 +397,67 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
                 onClick={() => setShowNotificationsPanel(!showNotificationsPanel)}
                 className={`p-2 rounded-xl border transition relative ${
                   showNotificationsPanel
-                    ? 'bg-blue-50 border-blue-300 text-blue-700'
-                    : 'border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                    ? 'bg-indigo-600/20 border-indigo-500 text-indigo-300'
+                    : 'border-slate-700 bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-800'
                 }`}
                 title="Live Entry Alerts"
               >
                 {notificationHistory.length > 0 ? (
-                  <BellRing className="w-4 h-4 text-blue-600" />
+                  <BellRing className="w-4 h-4 text-indigo-400" />
                 ) : (
                   <Bell className="w-4 h-4" />
                 )}
                 {notificationHistory.length > 0 && (
-                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-600 text-white rounded-full text-[10px] font-extrabold flex items-center justify-center animate-pulse">
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[10px] font-black flex items-center justify-center shadow-sm animate-pulse">
                     {notificationHistory.length > 9 ? '9+' : notificationHistory.length}
                   </span>
                 )}
               </button>
 
               {showNotificationsPanel && (
-                <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-150">
-                  <div className="p-3.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-slate-800 rounded-2xl shadow-2xl border border-slate-700 overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="p-3.5 bg-slate-900/80 border-b border-slate-700 flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Bell className="w-4 h-4 text-blue-600" />
-                      <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                        Live Entry Alerts ({notificationHistory.length})
+                      <Bell className="w-4 h-4 text-indigo-400" />
+                      <span className="text-xs font-bold text-white uppercase tracking-wider">
+                        Live Submissions ({notificationHistory.length})
                       </span>
                     </div>
                     {notificationHistory.length > 0 && (
                       <button
                         onClick={() => setNotificationHistory([])}
-                        className="text-[11px] font-semibold text-slate-500 hover:text-rose-600 transition"
+                        className="text-[11px] font-semibold text-slate-400 hover:text-rose-400 transition"
                       >
                         Clear All
                       </button>
                     )}
                   </div>
 
-                  {!desktopNotifyEnabled && (
-                    <div className="p-3 bg-blue-50/60 border-b border-blue-100 flex items-center justify-between gap-2">
-                      <span className="text-[11px] text-blue-800">
-                        Enable browser desktop pop-up alerts:
-                      </span>
-                      <button
-                        onClick={requestDesktopNotifications}
-                        className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold rounded-lg shadow-xs transition flex-shrink-0"
-                      >
-                        Enable
-                      </button>
-                    </div>
-                  )}
-
-                  <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
+                  <div className="max-h-80 overflow-y-auto divide-y divide-slate-700/60">
                     {notificationHistory.length === 0 ? (
                       <div className="py-8 text-center text-xs text-slate-400">
-                        No new entries received yet during this session.
+                        No new entries received during this session yet.
                       </div>
                     ) : (
                       notificationHistory.map((item) => (
                         <div
                           key={item.id}
                           onClick={() => viewAlertClient(item.client)}
-                          className="p-3 hover:bg-slate-50 transition cursor-pointer flex items-start gap-3 group"
+                          className="p-3 hover:bg-slate-700/50 transition cursor-pointer flex items-start gap-3 group"
                         >
-                          <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0 mt-0.5 group-hover:bg-blue-600 group-hover:text-white transition">
+                          <div className="w-9 h-9 rounded-xl bg-indigo-500/20 text-indigo-300 flex items-center justify-center flex-shrink-0 mt-0.5 group-hover:bg-indigo-600 group-hover:text-white transition">
                             <Building2 className="w-4 h-4" />
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center justify-between">
-                              <p className="text-xs font-bold text-slate-900 truncate">
+                              <p className="text-xs font-bold text-white truncate">
                                 {item.client.partyName}
                               </p>
                               <span className="text-[10px] text-slate-400">
                                 {item.receivedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                               </span>
                             </div>
-                            <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+                            <p className="text-[11px] text-slate-300 mt-0.5 truncate">
                               By {item.client.submittedBy} • {item.client.contactNumber}
                             </p>
                           </div>
@@ -880,21 +469,32 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
               )}
             </div>
 
+            {/* User Profile Avatar */}
             {currentUser.photoURL ? (
               <img
                 src={currentUser.photoURL}
-                alt="Google Avatar"
-                className="w-9 h-9 rounded-full object-cover border border-slate-200 shadow-xs"
+                alt="Admin Avatar"
+                className="w-9 h-9 rounded-full object-cover border border-slate-700 shadow-sm"
               />
             ) : (
-              <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs border border-blue-200">
+              <div className="w-9 h-9 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 flex items-center justify-center font-bold text-xs">
                 {currentUser.displayName ? currentUser.displayName.charAt(0).toUpperCase() : currentUser.email?.charAt(0).toUpperCase() || 'A'}
               </div>
             )}
 
+            <div className="hidden sm:flex flex-col text-right">
+              <span className="text-xs font-bold text-white max-w-[150px] truncate">
+                {currentUser.displayName || currentUser.email}
+              </span>
+              <span className="text-[10px] text-indigo-400 font-semibold uppercase tracking-wider">
+                Administrator
+              </span>
+            </div>
+
+            {/* Accessible Logout Button */}
             <button
-              onClick={handleSignOut}
-              className="p-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition border border-slate-200"
+              onClick={onSignOut}
+              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition border border-slate-700"
               title="Sign Out"
             >
               <LogOut className="w-4 h-4" />
@@ -908,16 +508,16 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
         {activeAlerts.map((alert) => (
           <div
             key={alert.id}
-            className="pointer-events-auto rounded-2xl bg-white border-2 border-indigo-500/80 shadow-2xl p-4 animate-in slide-in-from-top-6 fade-in duration-300 ring-4 ring-indigo-500/10 overflow-hidden relative"
+            className="pointer-events-auto rounded-2xl bg-slate-800 border border-indigo-500/60 shadow-2xl p-4 animate-in slide-in-from-top-6 fade-in duration-300 ring-4 ring-indigo-500/20 overflow-hidden relative text-white"
           >
-            <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 uppercase tracking-wider">
+            <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-700">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-400 uppercase tracking-wider">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>New Client Entry Added!</span>
+                <span>New Client Intake!</span>
               </div>
               <button
                 onClick={() => dismissAlert(alert.id)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -928,38 +528,38 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
                 <img
                   src={alert.client.photos[0]}
                   alt={alert.client.partyName}
-                  className="w-12 h-12 rounded-xl object-cover border border-slate-200 flex-shrink-0 shadow-xs"
+                  className="w-12 h-12 rounded-xl object-cover border border-slate-700 flex-shrink-0 shadow-xs"
                 />
               ) : (
-                <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center flex-shrink-0 border border-indigo-100">
+                <div className="w-12 h-12 rounded-xl bg-indigo-500/20 text-indigo-300 flex items-center justify-center flex-shrink-0 border border-indigo-500/30">
                   <Building2 className="w-6 h-6" />
                 </div>
               )}
               <div className="min-w-0 flex-1">
-                <h4 className="text-sm font-bold text-slate-900 truncate">
+                <h4 className="text-sm font-bold text-white truncate">
                   {alert.client.partyName}
                 </h4>
-                <p className="text-xs text-slate-600 font-medium mt-0.5">
+                <p className="text-xs text-slate-300 font-medium mt-0.5">
                   📞 {alert.client.contactNumber} • ⚙️ {alert.client.machineCount} machines
                 </p>
                 <p className="text-[11px] text-slate-400 truncate mt-0.5">
-                  Submitted by <span className="font-semibold text-slate-600">{alert.client.submittedBy}</span>
+                  Submitted by <span className="font-semibold text-slate-200">{alert.client.submittedBy}</span>
                 </p>
               </div>
             </div>
 
-            <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-end gap-2">
+            <div className="mt-3 pt-2 border-t border-slate-700 flex items-center justify-end gap-2">
               <button
                 onClick={() => dismissAlert(alert.id)}
-                className="px-2.5 py-1 text-xs font-medium text-slate-500 hover:text-slate-700 transition"
+                className="px-2.5 py-1 text-xs font-medium text-slate-400 hover:text-white transition"
               >
                 Dismiss
               </button>
               <button
                 onClick={() => viewAlertClient(alert.client)}
-                className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-xs transition flex items-center gap-1"
+                className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition flex items-center gap-1"
               >
-                <span>View Details</span>
+                <span>Inspect Entry</span>
                 <ExternalLink className="w-3 h-3" />
               </button>
             </div>
@@ -967,88 +567,91 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
         ))}
       </div>
 
-      {/* Main Content Area */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-6">
+      {/* Main Content */}
+      <main
+        className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex-1 w-full space-y-6"
+        style={{ paddingBottom: 'max(2rem, env(safe-area-inset-bottom, 0px))' }}
+      >
         {/* Action Success Alert */}
         {actionSuccess && (
-          <div className="rounded-2xl bg-emerald-50 border border-emerald-200 p-4 shadow-sm flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-4 duration-300">
-            <div className="flex items-center gap-2.5 text-emerald-900 text-sm font-semibold">
-              <CheckCircle className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+          <div className="rounded-2xl bg-emerald-950/80 border border-emerald-600/50 p-4 shadow-md flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-4 duration-300">
+            <div className="flex items-center gap-2.5 text-emerald-200 text-sm font-semibold">
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
               <span>{actionSuccess}</span>
             </div>
-            <button onClick={() => setActionSuccess(null)} className="text-emerald-700 hover:text-emerald-900">
+            <button onClick={() => setActionSuccess(null)} className="text-emerald-400 hover:text-emerald-200">
               <X className="w-4 h-4" />
             </button>
           </div>
         )}
 
         {/* Metrics Grid */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <div className="bg-slate-800/90 rounded-2xl p-4 sm:p-5 border border-slate-700/80 shadow-md">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Clients</span>
-              <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Clients</span>
+              <div className="w-8 h-8 rounded-lg bg-slate-700 text-slate-300 flex items-center justify-center">
                 <Users className="w-4 h-4" />
               </div>
             </div>
-            <p className="text-2xl font-black text-slate-900 mt-2">{metrics.total}</p>
+            <p className="text-2xl sm:text-3xl font-black text-white mt-2">{metrics.total}</p>
           </div>
 
-          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
+          <div className="bg-slate-800/90 rounded-2xl p-4 sm:p-5 border border-slate-700/80 shadow-md">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-amber-600 uppercase tracking-wider">Pending Review</span>
-              <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+              <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">Pending Review</span>
+              <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center">
                 <Clock className="w-4 h-4" />
               </div>
             </div>
-            <p className="text-2xl font-black text-amber-600 mt-2">{metrics.submitted}</p>
+            <p className="text-2xl sm:text-3xl font-black text-amber-400 mt-2">{metrics.submitted}</p>
           </div>
 
-          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
+          <div className="bg-slate-800/90 rounded-2xl p-4 sm:p-5 border border-slate-700/80 shadow-md">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">Verified</span>
-              <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+              <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Verified</span>
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
                 <CheckCircle className="w-4 h-4" />
               </div>
             </div>
-            <p className="text-2xl font-black text-emerald-600 mt-2">{metrics.verified}</p>
+            <p className="text-2xl sm:text-3xl font-black text-emerald-400 mt-2">{metrics.verified}</p>
           </div>
 
-          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
+          <div className="bg-slate-800/90 rounded-2xl p-4 sm:p-5 border border-slate-700/80 shadow-md">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-rose-600 uppercase tracking-wider">Rejected</span>
-              <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center">
+              <span className="text-xs font-bold text-rose-400 uppercase tracking-wider">Rejected</span>
+              <div className="w-8 h-8 rounded-lg bg-rose-500/20 text-rose-400 flex items-center justify-center">
                 <XCircle className="w-4 h-4" />
               </div>
             </div>
-            <p className="text-2xl font-black text-rose-600 mt-2">{metrics.rejected}</p>
+            <p className="text-2xl sm:text-3xl font-black text-rose-400 mt-2">{metrics.rejected}</p>
           </div>
         </div>
 
-        {/* Toolbar: Search, Filters, CSV Export */}
-        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="relative w-full md:w-80">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+        {/* Toolbar: Search, Filters & Export Menu */}
+        <div className="bg-slate-800/90 rounded-2xl p-4 border border-slate-700/80 shadow-md flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 sm:gap-4">
+          <div className="relative flex-1 max-w-md">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search by party, phone, submitter..."
-              className="w-full pl-9 pr-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+              placeholder="Search by party, phone, address, submitter..."
+              className="w-full pl-10 pr-4 py-2.5 bg-slate-900/80 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-500 transition"
             />
           </div>
 
-          <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end overflow-x-auto pb-1 md:pb-0">
+          <div className="flex items-center gap-2.5 justify-between md:justify-end overflow-x-auto pb-1 md:pb-0">
             {/* Status Filter Tabs */}
-            <div className="flex rounded-xl bg-slate-100 p-1 flex-shrink-0">
+            <div className="flex rounded-xl bg-slate-900/80 p-1 border border-slate-700 flex-shrink-0">
               {(['all', 'submitted', 'verified', 'rejected'] as const).map((filter) => (
                 <button
                   key={filter}
                   onClick={() => setStatusFilter(filter)}
                   className={`px-3 py-1.5 text-xs font-bold rounded-lg capitalize transition ${
                     statusFilter === filter
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-500 hover:text-slate-900'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
                   }`}
                 >
                   {filter}
@@ -1056,67 +659,106 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
               ))}
             </div>
 
-            {/* Export CSV Button */}
-            <button
-              onClick={handleExportCSV}
-              className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center gap-2 flex-shrink-0"
-              title="Download filtered client records as CSV spreadsheet"
-            >
-              <Download className="w-4 h-4" />
-              <span>Export CSV</span>
-            </button>
+            {/* Export Dropdown Button */}
+            <div className="relative flex-shrink-0" ref={exportDropdownRef}>
+              <button
+                onClick={() => setShowExportMenu(!showExportMenu)}
+                disabled={isExporting}
+                className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/30 transition flex items-center gap-2 disabled:opacity-60"
+                title="Export filtered records"
+              >
+                {isExporting ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Download className="w-4 h-4" />
+                )}
+                <span>Export ({filteredClients.length})</span>
+                <ChevronDown className="w-3.5 h-3.5 opacity-70" />
+              </button>
+
+              {showExportMenu && (
+                <div className="absolute right-0 mt-2 w-52 bg-slate-800 rounded-xl shadow-2xl border border-slate-700 py-1.5 z-40 animate-in fade-in zoom-in-95 duration-150">
+                  <button
+                    onClick={() => handleExport('xlsx')}
+                    className="w-full px-3.5 py-2 text-left text-xs font-semibold text-slate-200 hover:bg-slate-700 hover:text-white flex items-center gap-2.5 transition"
+                  >
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                    <span>Export as Excel (.xlsx)</span>
+                  </button>
+                  <button
+                    onClick={() => handleExport('csv')}
+                    className="w-full px-3.5 py-2 text-left text-xs font-semibold text-slate-200 hover:bg-slate-700 hover:text-white flex items-center gap-2.5 transition"
+                  >
+                    <FileText className="w-4 h-4 text-blue-400" />
+                    <span>Export as CSV (.csv)</span>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Client Records Table */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        {/* Client Records Table / Cards */}
+        <div className="bg-slate-800/90 rounded-2xl border border-slate-700/80 shadow-md overflow-hidden">
           {dataLoading ? (
             <div className="py-16 flex flex-col items-center justify-center gap-3 text-slate-400">
-              <RefreshCw className="w-6 h-6 animate-spin text-blue-500" />
-              <p className="text-xs font-medium">Fetching real-time records...</p>
+              <RefreshCw className="w-7 h-7 animate-spin text-indigo-500" />
+              <p className="text-xs font-medium tracking-wide">Syncing real-time records...</p>
             </div>
           ) : filteredClients.length === 0 ? (
-            <div className="py-16 text-center text-slate-400">
-              <Building2 className="w-10 h-10 mx-auto mb-2 text-slate-300" />
-              <p className="text-sm font-semibold text-slate-600">No client records found</p>
-              <p className="text-xs text-slate-400 mt-1">Try clearing filters or search term</p>
+            <div className="py-16 text-center text-slate-400 px-4">
+              <Building2 className="w-12 h-12 mx-auto mb-3 text-slate-600" />
+              <p className="text-sm font-bold text-slate-300">No client records found</p>
+              <p className="text-xs text-slate-500 mt-1">Try selecting another filter or clear search input.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50/75 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  <tr className="border-b border-slate-700/80 bg-slate-900/60 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
                     <th className="py-3.5 px-4">Party & Contact</th>
                     <th className="py-3.5 px-4">Capacity & Machines</th>
                     <th className="py-3.5 px-4">Photos</th>
                     <th className="py-3.5 px-4">Status</th>
-                    <th className="py-3.5 px-4">Submitter</th>
-                    <th className="py-3.5 px-4 text-right">Verification Action</th>
+                    <th className="py-3.5 px-4">Submitted By</th>
+                    <th className="py-3.5 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 text-sm">
+                <tbody className="divide-y divide-slate-700/50 text-sm">
                   {filteredClients.map((client) => (
                     <tr
                       key={client.id}
                       onClick={() => setSelectedClient(client)}
-                      className="hover:bg-slate-50/80 transition cursor-pointer group"
+                      className="hover:bg-slate-700/30 transition cursor-pointer group"
                     >
+                      {/* Party & Contact */}
                       <td className="py-4 px-4">
-                        <div className="font-bold text-slate-900 group-hover:text-blue-600 transition">
+                        <div className="font-bold text-white group-hover:text-indigo-400 transition">
                           {client.partyName}
                         </div>
-                        <div className="text-xs text-slate-500 font-mono mt-0.5 flex items-center gap-1">
-                          <Phone className="w-3 h-3 text-slate-400" />
-                          {client.contactNumber}
+                        <div className="text-xs text-slate-400 font-mono mt-0.5 flex items-center gap-2">
+                          <span>{client.contactNumber}</span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              callPhoneNumber(client.contactNumber);
+                            }}
+                            className="p-1 rounded-lg bg-indigo-500/20 text-indigo-300 hover:bg-indigo-600 hover:text-white transition"
+                            title="Call Party directly"
+                          >
+                            <PhoneCall className="w-3 h-3" />
+                          </button>
                         </div>
                       </td>
 
+                      {/* Capacity & Machines */}
                       <td className="py-4 px-4">
-                        <div className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
-                          <Cpu className="w-3.5 h-3.5 text-slate-400" />
+                        <div className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                          <Cpu className="w-3.5 h-3.5 text-indigo-400" />
                           <span>{client.machineCount} machines</span>
                         </div>
-                        <div className="text-xs text-slate-500 mt-0.5 truncate max-w-xs">
+                        <div className="text-xs text-slate-400 mt-0.5 truncate max-w-xs">
                           {client.monthlyCapacity}
                         </div>
                       </td>
@@ -1131,20 +773,20 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
                                 src={photo}
                                 alt="thumb"
                                 onClick={(e) => openLightbox(client.photos!, pIdx, client.partyName, e)}
-                                className="w-9 h-9 rounded-lg object-cover border border-slate-200 hover:scale-105 transition shadow-xs"
+                                className="w-9 h-9 rounded-lg object-cover border border-slate-700 hover:scale-105 transition shadow-sm cursor-zoom-in"
                               />
                             ))}
                             {client.photos.length > 2 && (
                               <span
                                 onClick={(e) => openLightbox(client.photos!, 2, client.partyName, e)}
-                                className="w-9 h-9 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] font-bold flex items-center justify-center border border-slate-200 transition"
+                                className="w-9 h-9 rounded-lg bg-slate-700 text-slate-300 text-[10px] font-bold flex items-center justify-center border border-slate-600 hover:bg-slate-600 transition cursor-zoom-in"
                               >
                                 +{client.photos.length - 2}
                               </span>
                             )}
                           </div>
                         ) : (
-                          <span className="text-xs text-slate-400 italic">No photos</span>
+                          <span className="text-xs text-slate-500 italic">No photos</span>
                         )}
                       </td>
 
@@ -1153,30 +795,34 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
                         <span
                           className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider ${
                             client.status === 'verified'
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
                               : client.status === 'rejected'
-                              ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                              : 'bg-amber-50 text-amber-700 border border-amber-200'
+                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                              : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                           }`}
                         >
                           {client.status || 'submitted'}
                         </span>
                       </td>
 
-                      {/* Submitter */}
+                      {/* Submitter & Call Agent Button */}
                       <td className="py-4 px-4">
-                        <div className="text-xs font-semibold text-slate-700">{client.submittedBy}</div>
-                        <div className="text-[11px] text-slate-400">{formatDate(client.createdAt)}</div>
+                        <div className="text-xs font-semibold text-slate-200 truncate max-w-[160px]">
+                          {client.submittedBy}
+                        </div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">
+                          {formatDate(client.createdAt)}
+                        </div>
                       </td>
 
-                      {/* Actions */}
+                      {/* Verification Actions */}
                       <td className="py-4 px-4 text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-1.5">
                           {client.status !== 'verified' && (
                             <button
                               onClick={(e) => handleUpdateStatus(client.id, 'verified', e)}
                               disabled={updatingId === client.id}
-                              className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs transition flex items-center gap-1 disabled:opacity-60"
+                              className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition flex items-center gap-1 disabled:opacity-60 active:scale-95"
                               title="Verify Record"
                             >
                               <CheckCircle className="w-3.5 h-3.5" />
@@ -1188,7 +834,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
                             <button
                               onClick={(e) => handleUpdateStatus(client.id, 'rejected', e)}
                               disabled={updatingId === client.id}
-                              className="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold border border-rose-200 transition flex items-center gap-1 disabled:opacity-60"
+                              className="px-2.5 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-xs font-semibold border border-rose-500/40 transition flex items-center gap-1 disabled:opacity-60 active:scale-95"
                               title="Reject Record"
                             >
                               <XCircle className="w-3.5 h-3.5" />
@@ -1196,10 +842,10 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
                             </button>
                           )}
 
-                          {/* Delete */}
+                          {/* Delete Record */}
                           <button
                             onClick={() => setDeletingClient(client)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition border border-transparent hover:border-rose-200"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition border border-transparent hover:border-rose-500/30"
                             title="Delete Record"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -1215,85 +861,141 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
         </div>
       </main>
 
-      {/* Details Modal */}
+      {/* Client Detail Review Modal */}
       {selectedClient && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-xl w-full overflow-hidden animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-              <div className="flex items-center gap-2">
-                <Building2 className="w-5 h-5 text-blue-600" />
-                <h3 className="font-bold text-slate-900 text-base">{selectedClient.partyName}</h3>
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-800 rounded-2xl shadow-2xl border border-slate-700 max-w-xl w-full overflow-hidden animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col text-white">
+            <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between bg-slate-900/80">
+              <div className="flex items-center gap-2.5">
+                <Building2 className="w-5 h-5 text-indigo-400" />
+                <h3 className="font-bold text-white text-base truncate">{selectedClient.partyName}</h3>
               </div>
               <button
                 onClick={() => setSelectedClient(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 transition"
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <div className="p-6 space-y-4 overflow-y-auto flex-1 text-sm">
+              {/* Call Agent & Contact Section */}
+              <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div>
+                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                    Contact / Submitter
+                  </span>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="font-mono font-bold text-white">{selectedClient.contactNumber}</span>
+                    <span className="text-xs text-slate-400">({selectedClient.submittedBy})</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => callPhoneNumber(selectedClient.contactNumber)}
+                    className="flex-1 sm:flex-none px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md transition flex items-center justify-center gap-1.5 active:scale-95"
+                  >
+                    <PhoneCall className="w-3.5 h-3.5" />
+                    <span>Call Contact</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Data Grid */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <span className="text-xs font-bold text-slate-400 uppercase">Contact</span>
-                  <p className="font-mono font-semibold text-slate-800 mt-0.5">{selectedClient.contactNumber}</p>
+                  <span className="text-xs font-bold text-slate-400 uppercase flex items-center gap-1">
+                    <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+                    Machines
+                  </span>
+                  <p className="font-semibold text-slate-200 mt-1">{selectedClient.machineCount} units</p>
                 </div>
+
+                <div>
+                  <span className="text-xs font-bold text-slate-400 uppercase flex items-center gap-1">
+                    <Gauge className="w-3.5 h-3.5 text-indigo-400" />
+                    Capacity
+                  </span>
+                  <p className="font-semibold text-slate-200 mt-1">{selectedClient.monthlyCapacity}</p>
+                </div>
+
                 <div>
                   <span className="text-xs font-bold text-slate-400 uppercase">Status</span>
-                  <p className="font-semibold capitalize mt-0.5">{selectedClient.status || 'submitted'}</p>
+                  <p className="mt-1">
+                    <span
+                      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold uppercase ${
+                        selectedClient.status === 'verified'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                          : selectedClient.status === 'rejected'
+                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                      }`}
+                    >
+                      {selectedClient.status || 'submitted'}
+                    </span>
+                  </p>
                 </div>
+
                 <div>
-                  <span className="text-xs font-bold text-slate-400 uppercase">Machines</span>
-                  <p className="font-semibold text-slate-800 mt-0.5">{selectedClient.machineCount} units</p>
-                </div>
-                <div>
-                  <span className="text-xs font-bold text-slate-400 uppercase">Capacity</span>
-                  <p className="font-semibold text-slate-800 mt-0.5">{selectedClient.monthlyCapacity}</p>
+                  <span className="text-xs font-bold text-slate-400 uppercase">Submitted At</span>
+                  <p className="text-slate-300 text-xs mt-1">{formatDate(selectedClient.createdAt)}</p>
                 </div>
               </div>
 
+              {/* Address */}
               <div>
-                <span className="text-xs font-bold text-slate-400 uppercase">Address</span>
-                <p className="text-slate-700 mt-0.5">{selectedClient.address}</p>
+                <span className="text-xs font-bold text-slate-400 uppercase flex items-center gap-1 mb-1">
+                  <MapPin className="w-3.5 h-3.5 text-indigo-400" />
+                  Factory / Office Address
+                </span>
+                <p className="text-slate-300 text-xs leading-relaxed bg-slate-900/60 p-3 rounded-xl border border-slate-700/60">
+                  {selectedClient.address}
+                </p>
               </div>
 
+              {/* Photos Gallery */}
               {selectedClient.photos && selectedClient.photos.length > 0 && (
                 <div>
                   <span className="text-xs font-bold text-slate-400 uppercase mb-2 block">
-                    Attached Photos ({selectedClient.photos.length})
+                    Attached Photos ({selectedClient.photos.length}) — Click to Inspect with Zoom
                   </span>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-3 gap-2.5">
                     {selectedClient.photos.map((p, i) => (
-                      <img
+                      <div
                         key={i}
-                        src={p}
-                        alt="photo"
                         onClick={() => openLightbox(selectedClient.photos!, i, selectedClient.partyName)}
-                        className="w-full aspect-square object-cover rounded-xl border border-slate-200 hover:opacity-90 cursor-pointer transition shadow-xs"
-                      />
+                        className="relative group rounded-xl overflow-hidden border border-slate-700 bg-slate-900 aspect-square cursor-zoom-in shadow-sm hover:scale-[1.02] transition"
+                      >
+                        <img src={p} alt="inspection" className="w-full h-full object-cover" />
+                        <span className="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/80 text-white text-[10px] font-bold rounded">
+                          #{i + 1}
+                        </span>
+                      </div>
                     ))}
                   </div>
                 </div>
               )}
             </div>
 
-            <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
+            <div className="px-6 py-4 border-t border-slate-700 bg-slate-900/80 flex items-center justify-between">
               <button
                 onClick={() => setDeletingClient(selectedClient)}
-                className="px-3 py-2 text-rose-600 hover:bg-rose-50 rounded-xl text-xs font-semibold transition"
+                className="px-3 py-2 text-rose-400 hover:bg-rose-500/10 rounded-xl text-xs font-semibold transition"
               >
                 Delete Record
               </button>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => handleUpdateStatus(selectedClient.id, 'rejected')}
-                  className="px-4 py-2 rounded-xl border border-rose-200 text-rose-700 hover:bg-rose-50 text-xs font-bold transition"
+                  className="px-4 py-2 rounded-xl border border-rose-500/40 text-rose-300 hover:bg-rose-500/20 text-xs font-bold transition active:scale-95"
                 >
                   Reject
                 </button>
                 <button
                   onClick={() => handleUpdateStatus(selectedClient.id, 'verified')}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-xs"
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-md active:scale-95"
                 >
                   Verify Record
                 </button>
@@ -1303,227 +1005,39 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({ onSwitchToAgen
         </div>
       )}
 
-      {/* Lightbox Modal with Zoom & Pan */}
-      {lightboxPhotos && (
-        <div
-          className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-md flex flex-col justify-between p-3 sm:p-6 select-none animate-in fade-in duration-200"
-          onClick={closeLightbox}
-        >
-          {/* Lightbox Header & Zoom Controls */}
-          <div
-            className="w-full max-w-5xl mx-auto flex items-center justify-between text-white pb-3 border-b border-slate-800/80 gap-3"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center flex-shrink-0">
-                <ImageIcon className="w-4 h-4" />
-              </div>
-              <div className="min-w-0">
-                <h4 className="text-sm font-bold text-white leading-tight truncate">{lightboxTitle}</h4>
-                <p className="text-xs text-slate-400">
-                  Photo {lightboxIndex + 1} of {lightboxPhotos.length}
-                </p>
-              </div>
-            </div>
-
-            {/* Zoom & Rotation Toolbar */}
-            <div className="flex items-center gap-1 sm:gap-2">
-              <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-700/80 backdrop-blur-md px-2 py-1 rounded-xl shadow-lg text-white">
-                <button
-                  type="button"
-                  onClick={() => setLightboxZoom((prev) => {
-                    const next = Math.max(prev - 0.5, 1);
-                    if (next === 1) setLightboxPosition({ x: 0, y: 0 });
-                    return next;
-                  })}
-                  disabled={lightboxZoom <= 1}
-                  className="p-1.5 rounded-lg hover:bg-white/10 disabled:opacity-30 transition text-slate-300 hover:text-white"
-                  title="Zoom Out (-)"
-                >
-                  <ZoomOut className="w-4 h-4" />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={resetLightboxZoom}
-                  className="px-2 py-0.5 rounded text-xs font-mono font-bold text-blue-400 hover:bg-white/10 transition"
-                  title="Click to reset zoom"
-                >
-                  {Math.round(lightboxZoom * 100)}%
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setLightboxZoom((prev) => Math.min(prev + 0.5, 4))}
-                  disabled={lightboxZoom >= 4}
-                  className="p-1.5 rounded-lg hover:bg-white/10 disabled:opacity-30 transition text-slate-300 hover:text-white"
-                  title="Zoom In (+)"
-                >
-                  <ZoomIn className="w-4 h-4" />
-                </button>
-
-                <div className="w-px h-4 bg-slate-700 mx-0.5" />
-
-                <button
-                  type="button"
-                  onClick={() => setLightboxRotation((prev) => (prev + 90) % 360)}
-                  className="p-1.5 rounded-lg hover:bg-white/10 transition text-slate-300 hover:text-white"
-                  title="Rotate 90°"
-                >
-                  <RotateCw className="w-4 h-4" />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={resetLightboxZoom}
-                  className="p-1.5 rounded-lg hover:bg-white/10 transition text-slate-300 hover:text-white"
-                  title="Reset Fit (1:1)"
-                >
-                  <Maximize2 className="w-4 h-4" />
-                </button>
-              </div>
-
-              <button
-                onClick={closeLightbox}
-                className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition border border-slate-700/60"
-                title="Close (Esc)"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-
-          {/* Lightbox Center Content with Pan & Zoom */}
-          <div
-            className="relative flex-1 flex items-center justify-center my-2 sm:my-4 overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-            onWheel={(e) => {
-              e.preventDefault();
-              if (e.deltaY < 0) {
-                setLightboxZoom((prev) => Math.min(prev + 0.25, 4));
-              } else {
-                setLightboxZoom((prev) => {
-                  const next = Math.max(prev - 0.25, 1);
-                  if (next === 1) setLightboxPosition({ x: 0, y: 0 });
-                  return next;
-                });
-              }
-            }}
-            onMouseDown={(e) => {
-              if (lightboxZoom > 1) {
-                setIsLightboxDragging(true);
-                setLightboxDragStart({ x: e.clientX - lightboxPosition.x, y: e.clientY - lightboxPosition.y });
-              }
-            }}
-            onMouseMove={(e) => {
-              if (isLightboxDragging && lightboxZoom > 1) {
-                setLightboxPosition({ x: e.clientX - lightboxDragStart.x, y: e.clientY - lightboxDragStart.y });
-              }
-            }}
-            onMouseUp={() => setIsLightboxDragging(false)}
-            onMouseLeave={() => setIsLightboxDragging(false)}
-            onDoubleClick={() => {
-              if (lightboxZoom > 1) {
-                resetLightboxZoom();
-              } else {
-                setLightboxZoom(2.5);
-              }
-            }}
-          >
-            {/* Prev Button */}
-            {lightboxPhotos.length > 1 && (
-              <button
-                onClick={prevLightboxPhoto}
-                className="absolute left-2 sm:left-6 z-20 p-3 rounded-full bg-slate-900/80 hover:bg-blue-600 text-white transition shadow-xl border border-slate-700/60 hover:scale-110"
-                title="Previous Photo (Left Arrow)"
-              >
-                <ChevronLeft className="w-6 h-6" />
-              </button>
-            )}
-
-            {/* Main Zoomable Image */}
-            <div className="max-h-[70vh] max-w-[90vw] flex items-center justify-center">
-              <img
-                src={lightboxPhotos[lightboxIndex]}
-                alt={`${lightboxTitle} Full Size ${lightboxIndex + 1}`}
-                draggable={false}
-                style={{
-                  transform: `translate(${lightboxPosition.x}px, ${lightboxPosition.y}px) scale(${lightboxZoom}) rotate(${lightboxRotation}deg)`,
-                  transition: isLightboxDragging ? 'none' : 'transform 0.15s ease-out',
-                  touchAction: 'none'
-                }}
-                className="max-h-[68vh] w-auto max-w-full object-contain rounded-2xl shadow-2xl border border-slate-800/80 cursor-grab active:cursor-grabbing select-none"
-              />
-            </div>
-
-            {/* Next Button */}
-            {lightboxPhotos.length > 1 && (
-              <button
-                onClick={nextLightboxPhoto}
-                className="absolute right-2 sm:right-6 z-20 p-3 rounded-full bg-slate-900/80 hover:bg-blue-600 text-white transition shadow-xl border border-slate-700/60 hover:scale-110"
-                title="Next Photo (Right Arrow)"
-              >
-                <ChevronRight className="w-6 h-6" />
-              </button>
-            )}
-          </div>
-
-          {/* Lightbox Bottom Thumbnail Strip & Controls Hint */}
-          <div
-            className="w-full max-w-xl mx-auto flex flex-col items-center gap-2 pt-1"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {lightboxPhotos.length > 1 && (
-              <div className="flex items-center justify-center gap-2 overflow-x-auto max-w-full py-1">
-                {lightboxPhotos.map((imgSrc, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => {
-                      resetLightboxZoom();
-                      setLightboxIndex(idx);
-                    }}
-                    className={`relative w-12 h-12 rounded-xl overflow-hidden border-2 transition flex-shrink-0 ${
-                      lightboxIndex === idx
-                        ? 'border-blue-500 ring-2 ring-blue-400/50 scale-105'
-                        : 'border-slate-800 opacity-60 hover:opacity-100'
-                    }`}
-                  >
-                    <img src={imgSrc} alt={`Thumbnail ${idx + 1}`} className="w-full h-full object-cover" />
-                  </button>
-                ))}
-              </div>
-            )}
-            <p className="text-[11px] text-slate-400 text-center select-none">
-              💡 Scroll mouse to zoom • Drag to pan when zoomed • Double click to zoom in/reset
-            </p>
-          </div>
-        </div>
-      )}
+      {/* Lightbox Modal with Pinch-to-zoom & Pan */}
+      <ImageLightboxModal
+        isOpen={isLightboxOpen}
+        photos={lightboxPhotos}
+        initialIndex={lightboxIndex}
+        title={lightboxTitle}
+        onClose={() => setIsLightboxOpen(false)}
+      />
 
       {/* Delete Confirmation Modal */}
       {deletingClient && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full p-6 space-y-4">
-            <div className="flex items-center gap-3 text-rose-600">
-              <div className="w-10 h-10 rounded-xl bg-rose-50 flex items-center justify-center border border-rose-100">
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-800 rounded-2xl shadow-2xl border border-slate-700 max-w-md w-full p-6 space-y-4 text-white animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 text-rose-400">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/20 flex items-center justify-center border border-rose-500/30">
                 <AlertTriangle className="w-5 h-5" />
               </div>
-              <h3 className="font-bold text-slate-900 text-lg">Delete Record?</h3>
+              <h3 className="font-bold text-white text-lg">Delete Record?</h3>
             </div>
-            <p className="text-sm text-slate-600">
-              Are you sure you want to permanently delete <span className="font-bold text-slate-900">"{deletingClient.partyName}"</span>?
+            <p className="text-sm text-slate-300">
+              Are you sure you want to permanently delete <span className="font-bold text-white">"{deletingClient.partyName}"</span>? This action cannot be undone.
             </p>
             <div className="flex items-center justify-end gap-3 pt-2">
               <button
                 onClick={() => setDeletingClient(null)}
-                className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 text-sm font-semibold transition"
+                className="px-4 py-2 rounded-xl text-slate-300 hover:bg-slate-700 text-sm font-semibold transition"
               >
                 Cancel
               </button>
               <button
                 onClick={handleConfirmDelete}
                 disabled={isDeleting}
-                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-sm font-bold shadow-md transition disabled:opacity-60 flex items-center gap-2"
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-sm font-bold shadow-md transition disabled:opacity-60 flex items-center gap-2 active:scale-95"
               >
                 {isDeleting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                 <span>Delete</span>
