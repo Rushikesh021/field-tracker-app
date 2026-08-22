@@ -61,10 +61,14 @@ import { AdminPortalView } from './components/AdminPortalView';
 import { ImageLightboxModal } from './components/ImageLightboxModal';
 import { syncUserProfile, type UserProfile } from './services/userService';
 import {
-  requestNotificationPermission,
   sendDeviceNotification,
   playNotificationSound
 } from './services/notificationService';
+import { initializeNativePermissions } from './services/permissionService';
+import {
+  incrementAppBadgeCount,
+  clearAppBadgeCount
+} from './services/badgeService';
 
 export interface ClientRecord {
   id?: string;
@@ -81,10 +85,14 @@ export interface ClientRecord {
   updatedAt?: Timestamp | null;
 }
 
+const INTAKE_DRAFT_KEY = 'field_tracker_intake_draft';
+
 /**
  * Mobile-Optimized HTML5 Canvas Image Compression.
+ * - Max dimension: 1280px (preserves aspect ratio)
+ * - Format: JPEG, Quality: 0.7
  */
-export function compressImageFile(file: File, maxDimension = 800, quality = 0.6): Promise<string> {
+export function compressImageFile(file: File, maxDimension = 1280, quality = 0.7): Promise<string> {
   return new Promise((resolve, reject) => {
     const isImage = (file.type && file.type.startsWith('image/')) || /\.(jpe?g|png|webp|heic|heif|gif|bmp)$/i.test(file.name);
     if (!isImage) {
@@ -102,8 +110,8 @@ export function compressImageFile(file: File, maxDimension = 800, quality = 0.6)
       try {
         let { width, height } = img;
         if (width <= 0 || height <= 0) {
-          width = 800;
-          height = 600;
+          width = 1280;
+          height = 720;
         }
 
         if (width > height) {
@@ -173,15 +181,15 @@ export function compressImageFile(file: File, maxDimension = 800, quality = 0.6)
 /**
  * Compresses a base64 / dataUrl image from native Capacitor Camera.
  */
-export function compressBase64OrDataUrl(dataUrl: string, maxDimension = 800, quality = 0.6): Promise<string> {
+export function compressBase64OrDataUrl(dataUrl: string, maxDimension = 1280, quality = 0.7): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
       try {
         let { width, height } = img;
         if (width <= 0 || height <= 0) {
-          width = 800;
-          height = 600;
+          width = 1280;
+          height = 720;
         }
         if (width > height) {
           if (width > maxDimension) {
@@ -231,7 +239,7 @@ export default function App() {
   // Agent Navigation Tab: 'intake' | 'submissions'
   const [agentActiveTab, setAgentActiveTab] = useState<'intake' | 'submissions'>('intake');
 
-  // Intake Form State
+  // Intake Form State with Offline Form Preservation
   const [partyName, setPartyName] = useState('');
   const [contactNumber, setContactNumber] = useState('');
   const [machineCount, setMachineCount] = useState<string>('');
@@ -308,7 +316,44 @@ export default function App() {
     deletingClientRef.current = deletingClient;
   }, [deletingClient]);
 
-  // Initialize Native Features: Google Auth, Status Bar, Notifications, Hardware Back Button
+  // Restore cached draft from localStorage on startup
+  useEffect(() => {
+    try {
+      const savedDraft = localStorage.getItem(INTAKE_DRAFT_KEY);
+      if (savedDraft) {
+        const parsed = JSON.parse(savedDraft);
+        if (parsed.partyName) setPartyName(parsed.partyName);
+        if (parsed.contactNumber) setContactNumber(parsed.contactNumber);
+        if (parsed.machineCount) setMachineCount(parsed.machineCount);
+        if (parsed.monthlyCapacity) setMonthlyCapacity(parsed.monthlyCapacity);
+        if (parsed.address) setAddress(parsed.address);
+      }
+    } catch (e) {
+      console.warn('Error reading cached draft:', e);
+    }
+  }, []);
+
+  // Save active form inputs to offline draft cache
+  useEffect(() => {
+    if (partyName || contactNumber || machineCount || monthlyCapacity || address) {
+      try {
+        localStorage.setItem(
+          INTAKE_DRAFT_KEY,
+          JSON.stringify({
+            partyName,
+            contactNumber,
+            machineCount,
+            monthlyCapacity,
+            address
+          })
+        );
+      } catch (e) {
+        console.warn('Error saving draft:', e);
+      }
+    }
+  }, [partyName, contactNumber, machineCount, monthlyCapacity, address]);
+
+  // Initialize Native Features: Google Auth, Status Bar, Native Permissions, Hardware Back Button
   useEffect(() => {
     try {
       GoogleAuth.initialize({
@@ -329,7 +374,8 @@ export default function App() {
       }
     }
 
-    requestNotificationPermission();
+    // Gracefully initialize all native permissions on startup
+    initializeNativePermissions();
 
     // Handle Android hardware back button
     let backButtonHandle: any;
@@ -347,7 +393,7 @@ export default function App() {
           setDeletingClient(null);
           return;
         }
-        // At root level, gracefully exit app
+        // At root level, minimize or exit cleanly
         CapApp.exitApp();
       });
     }
@@ -376,12 +422,20 @@ export default function App() {
       } else {
         setUserProfile(null);
         setAuthLoading(false);
+        clearAppBadgeCount();
       }
     });
     return () => unsubscribe();
   }, []);
 
-  // Listen to Agent's submissions in real-time & Trigger Status Change Notifications
+  // Clear badge count when Agent views "My Submissions" tab
+  useEffect(() => {
+    if (agentActiveTab === 'submissions') {
+      clearAppBadgeCount();
+    }
+  }, [agentActiveTab]);
+
+  // Listen to Agent's submissions in real-time & Trigger Status Change Notifications & Badge Counters
   useEffect(() => {
     if (!currentUser) {
       setMySubmissions([]);
@@ -405,7 +459,7 @@ export default function App() {
           ...(docSnap.data() as Omit<ClientRecord, 'id'>)
         }));
 
-        // Status change detection for Agent Push Notifications
+        // Status change detection for Agent Push Notifications & App Icon Badges
         if (!isInitialSubmissionsLoadRef.current) {
           records.forEach((record) => {
             if (!record.id) return;
@@ -416,19 +470,21 @@ export default function App() {
               // Status changed! (e.g. from submitted to verified or rejected)
               if (currentStatus === 'verified') {
                 playNotificationSound();
+                incrementAppBadgeCount();
                 sendDeviceNotification(
-                  `Submission Verified: ${record.partyName}`,
+                  `Submission Update: ${record.partyName} marked as Verified`,
                   `Your client entry for "${record.partyName}" has been approved and verified by the Admin.`
                 );
-                setActionSuccess(`Great news! Your entry "${record.partyName}" was verified by Admin.`);
+                setActionSuccess(`Submission Update: "${record.partyName}" marked as Verified.`);
                 setTimeout(() => setActionSuccess(null), 6000);
               } else if (currentStatus === 'rejected') {
                 playNotificationSound();
+                incrementAppBadgeCount();
                 sendDeviceNotification(
-                  `Submission Update: ${record.partyName}`,
-                  `Your client entry for "${record.partyName}" was rejected by Admin.`
+                  `Submission Update: ${record.partyName} marked as Rejected`,
+                  `Your client entry for "${record.partyName}" was marked as rejected by Admin.`
                 );
-                setActionSuccess(`Notice: Your entry "${record.partyName}" was marked as rejected.`);
+                setActionSuccess(`Submission Update: "${record.partyName}" marked as Rejected.`);
                 setTimeout(() => setActionSuccess(null), 6000);
               }
             }
@@ -573,7 +629,7 @@ export default function App() {
       if (photo.dataUrl) {
         setIsCompressing(true);
         try {
-          const base64 = await compressBase64OrDataUrl(photo.dataUrl, 800, 0.6);
+          const base64 = await compressBase64OrDataUrl(photo.dataUrl, 1280, 0.7);
           setPhotos((prev) => [...prev, base64].slice(0, MAX_PHOTOS));
         } catch (err: unknown) {
           const error = err as { message?: string };
@@ -612,7 +668,7 @@ export default function App() {
         if (!file.type.startsWith('image/')) {
           throw new Error(`"${file.name}" is not a valid image format.`);
         }
-        const base64 = await compressImageFile(file, 800, 0.6);
+        const base64 = await compressImageFile(file, 1280, 0.7);
         compressedList.push(base64);
       }
       setPhotos((prev) => [...prev, ...compressedList].slice(0, MAX_PHOTOS));
@@ -675,7 +731,7 @@ export default function App() {
       if (photo.dataUrl) {
         setIsEditCompressing(true);
         try {
-          const base64 = await compressBase64OrDataUrl(photo.dataUrl, 800, 0.6);
+          const base64 = await compressBase64OrDataUrl(photo.dataUrl, 1280, 0.7);
           setEditPhotos((prev) => [...prev, base64].slice(0, MAX_PHOTOS));
         } catch (err: unknown) {
           const error = err as { message?: string };
@@ -712,7 +768,7 @@ export default function App() {
         if (!file.type.startsWith('image/')) {
           throw new Error(`"${file.name}" is not a valid image format.`);
         }
-        const base64 = await compressImageFile(file, 800, 0.6);
+        const base64 = await compressImageFile(file, 1280, 0.7);
         compressedList.push(base64);
       }
       setEditPhotos((prev) => [...prev, ...compressedList].slice(0, MAX_PHOTOS));
@@ -871,6 +927,7 @@ export default function App() {
       await signOut(auth);
       setCurrentUser(null);
       setUserProfile(null);
+      clearAppBadgeCount();
     } catch (err) {
       console.error('Sign out error:', err);
     }
@@ -917,7 +974,7 @@ export default function App() {
 
       await addDoc(collection(db, 'clients'), newRecord);
 
-      // Reset form
+      // Reset form and clear offline draft
       setPartyName('');
       setContactNumber('');
       setMachineCount('');
@@ -927,6 +984,12 @@ export default function App() {
       setPhotoError(null);
       setDuplicateClient(null);
       setSubmitSuccess(true);
+
+      try {
+        localStorage.removeItem(INTAKE_DRAFT_KEY);
+      } catch (e) {
+        console.warn('Error clearing draft:', e);
+      }
 
       setTimeout(() => {
         setSubmitSuccess(false);
@@ -1480,7 +1543,7 @@ export default function App() {
                     {isCompressing && (
                       <div className="p-3 rounded-xl bg-indigo-500/20 border border-indigo-500/30 text-xs text-indigo-300 flex items-center gap-2.5">
                         <RefreshCw className="w-4 h-4 text-indigo-400 animate-spin flex-shrink-0" />
-                        <span>Compressing photo on device...</span>
+                        <span>Compressing photo on device (1280px)...</span>
                       </div>
                     )}
 
@@ -1857,7 +1920,7 @@ export default function App() {
                 {isEditCompressing && (
                   <div className="p-2.5 rounded-lg bg-indigo-500/20 text-indigo-300 text-xs flex items-center gap-2">
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Compressing image...</span>
+                    <span>Compressing image (1280px)...</span>
                   </div>
                 )}
 
@@ -1875,7 +1938,7 @@ export default function App() {
                         className="absolute top-1 right-1 p-1 rounded-full bg-black/80 hover:bg-rose-600 text-white transition z-10"
                         title="Remove photo"
                       >
-                        <X className="w-3 h-3" />
+                        <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   ))}

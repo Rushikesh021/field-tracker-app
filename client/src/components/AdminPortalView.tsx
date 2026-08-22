@@ -48,6 +48,7 @@ import {
   sendDeviceNotification,
   playNotificationSound
 } from '../services/notificationService';
+import { setAppBadgeCount } from '../services/badgeService';
 import {
   exportClientsToExcel,
   exportClientsToCSV,
@@ -229,6 +230,12 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
 
     return () => unsubscribe();
   }, [triggerNewEntryAlert]);
+
+  // Update launcher home screen app icon badge with pending review count
+  useEffect(() => {
+    const pendingCount = clients.filter((c) => c.status === 'submitted' || !c.status).length;
+    setAppBadgeCount(pendingCount);
+  }, [clients]);
 
   // Status update handler
   const handleUpdateStatus = async (
