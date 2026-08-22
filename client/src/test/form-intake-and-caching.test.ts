@@ -13,7 +13,13 @@ describe('3. Form Intake, Image Processing & Offline Caching Suite', () => {
     it('persists in-progress intake form fields to localStorage', () => {
       const mockFormData = {
         partyName: 'Sunrise Textiles Ltd',
+        contactPerson: 'Arun Patel',
         contactNumber: '+91 98111 22233',
+        gstNumber: '24AAAAA0000A1Z5',
+        cityMarket: 'Surat Textile Market',
+        fabricType: 'Cotton Woven Dobby',
+        weaveSpecs: '40s x 40s / 132 x 72 / 125 GSM',
+        requirementType: 'Make to Order Weaving',
         machineCount: '48',
         monthlyCapacity: '120,000 meters/month',
         address: 'Sector 18, Electronic City, Bengaluru',
@@ -25,7 +31,13 @@ describe('3. Form Intake, Image Processing & Offline Caching Suite', () => {
       expect(saved).not.toBeNull();
       const parsed = JSON.parse(saved!);
       expect(parsed.partyName).toBe('Sunrise Textiles Ltd');
+      expect(parsed.contactPerson).toBe('Arun Patel');
       expect(parsed.contactNumber).toBe('+91 98111 22233');
+      expect(parsed.gstNumber).toBe('24AAAAA0000A1Z5');
+      expect(parsed.cityMarket).toBe('Surat Textile Market');
+      expect(parsed.fabricType).toBe('Cotton Woven Dobby');
+      expect(parsed.weaveSpecs).toBe('40s x 40s / 132 x 72 / 125 GSM');
+      expect(parsed.requirementType).toBe('Make to Order Weaving');
       expect(parsed.machineCount).toBe('48');
       expect(parsed.monthlyCapacity).toBe('120,000 meters/month');
       expect(parsed.address).toBe('Sector 18, Electronic City, Bengaluru');

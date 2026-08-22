@@ -7,7 +7,13 @@ import type { Timestamp } from 'firebase/firestore';
 export interface ExportableClient {
   id?: string;
   partyName: string;
+  contactPerson?: string;
   contactNumber: string;
+  gstNumber?: string;
+  cityMarket?: string;
+  fabricType?: string;
+  weaveSpecs?: string;
+  requirementType?: string;
   machineCount: number;
   monthlyCapacity: string;
   address: string;
@@ -35,25 +41,31 @@ function formatDateForExport(timestamp?: Timestamp | null): string {
 }
 
 /**
- * Format client rows for spreadsheet export.
+ * Format client rows for Texhub textile spreadsheet export.
  */
 function prepareExportRows(clients: ExportableClient[]) {
   return clients.map((c, idx) => ({
     'Sr No': idx + 1,
-    'Party Name': c.partyName || '',
-    'Contact Number': c.contactNumber || '',
-    'Machine Count': c.machineCount ?? 0,
+    'Client / Mill Name': c.partyName || '',
+    'Contact Person': c.contactPerson || '-',
+    'Phone / WhatsApp': c.contactNumber || '',
+    'GST / Tax ID': c.gstNumber || '-',
+    'City / Market': c.cityMarket || '-',
+    'Fabric Type': c.fabricType || 'Cotton Woven',
+    'Weave / Quality Specs': c.weaveSpecs || '-',
+    'Requirement Type': c.requirementType || 'Make to Order',
+    'Looms / Machines': c.machineCount ?? 0,
     'Monthly Capacity': c.monthlyCapacity || '',
-    'Factory / Office Address': c.address || '',
-    'Photos Count': c.photos ? c.photos.length : 0,
-    'Status': (c.status || 'submitted').toUpperCase(),
-    'Submitted By': c.submittedBy || 'Agent',
-    'Submission Date': formatDateForExport(c.createdAt)
+    'Mill / Office Address': c.address || '',
+    'Swatches Attached': c.photos ? c.photos.length : 0,
+    'Review Status': (c.status || 'submitted').toUpperCase(),
+    'Field Agent': c.submittedBy || 'Agent',
+    'Date Submitted': formatDateForExport(c.createdAt)
   }));
 }
 
 /**
- * Export clients to Excel (.xlsx) file.
+ * Export clients to Excel (.xlsx) file with Texhub Innovations Enterprise Branding.
  */
 export async function exportClientsToExcel(
   clients: ExportableClient[],
@@ -70,23 +82,29 @@ export async function exportClientsToExcel(
   // Set column widths for readability
   const colWidths = [
     { wch: 8 },  // Sr No
-    { wch: 30 }, // Party Name
-    { wch: 18 }, // Contact Number
-    { wch: 15 }, // Machine Count
-    { wch: 25 }, // Monthly Capacity
+    { wch: 32 }, // Mill Name
+    { wch: 22 }, // Contact Person
+    { wch: 20 }, // Phone Number
+    { wch: 18 }, // GST Number
+    { wch: 20 }, // City / Market
+    { wch: 22 }, // Fabric Type
+    { wch: 30 }, // Weave Specs
+    { wch: 22 }, // Requirement Type
+    { wch: 16 }, // Looms
+    { wch: 24 }, // Capacity
     { wch: 45 }, // Address
-    { wch: 14 }, // Photos Count
-    { wch: 14 }, // Status
-    { wch: 30 }, // Submitted By
-    { wch: 22 }  // Submission Date
+    { wch: 16 }, // Swatches
+    { wch: 16 }, // Status
+    { wch: 28 }, // Field Agent
+    { wch: 22 }  // Date
   ];
   worksheet['!cols'] = colWidths;
 
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, `Clients - ${filterName}`);
+  XLSX.utils.book_append_sheet(workbook, worksheet, `Texhub Orders - ${filterName}`);
 
   const dateStr = new Date().toISOString().split('T')[0];
-  const fileName = `FieldTracker_${filterName}_${dateStr}.xlsx`;
+  const fileName = `Texhub_Innovations_${filterName}_${dateStr}.xlsx`;
 
   if (Capacitor.isNativePlatform()) {
     try {
@@ -98,10 +116,10 @@ export async function exportClientsToExcel(
       });
 
       await Share.share({
-        title: `Field Tracker Export (${filterName})`,
-        text: `Exported ${clients.length} client record(s) from Field Tracker.`,
+        title: `TEXHUB INNOVATIONS - Client Intake & Field Orders Report (${filterName})`,
+        text: `Exported ${clients.length} textile client order record(s) from Texhub Field Tracker.`,
         url: savedFile.uri,
-        dialogTitle: 'Save or Share Excel Spreadsheet'
+        dialogTitle: 'Save or Share Texhub Excel Report'
       });
     } catch (err: unknown) {
       console.warn('Native share/save failed, attempting fallback download:', err);
@@ -113,7 +131,7 @@ export async function exportClientsToExcel(
 }
 
 /**
- * Export clients to CSV (.csv) file.
+ * Export clients to CSV (.csv) file with Texhub Innovations Header.
  */
 export async function exportClientsToCSV(
   clients: ExportableClient[],
@@ -128,10 +146,11 @@ export async function exportClientsToCSV(
   const worksheet = XLSX.utils.json_to_sheet(rows);
   const csvData = XLSX.utils.sheet_to_csv(worksheet);
   const dateStr = new Date().toISOString().split('T')[0];
-  const fileName = `FieldTracker_${filterName}_${dateStr}.csv`;
+  const fileName = `Texhub_Innovations_${filterName}_${dateStr}.csv`;
 
-  // Prepend UTF-8 BOM for proper Excel encoding
-  const bomCsv = '\uFEFF' + csvData;
+  // Prepend UTF-8 BOM and Title header
+  const titleHeader = `"TEXHUB INNOVATIONS - Client Intake & Field Orders Report (${filterName}) - Generated on ${new Date().toLocaleString()}"\n`;
+  const bomCsv = '\uFEFF' + titleHeader + csvData;
 
   if (Capacitor.isNativePlatform()) {
     try {
@@ -144,10 +163,10 @@ export async function exportClientsToCSV(
       });
 
       await Share.share({
-        title: `Field Tracker CSV Export (${filterName})`,
-        text: `Exported ${clients.length} client record(s) from Field Tracker.`,
+        title: `TEXHUB INNOVATIONS - Client Intake & Field Orders Report (${filterName})`,
+        text: `Exported ${clients.length} textile client order record(s) from Texhub Field Tracker.`,
         url: savedFile.uri,
-        dialogTitle: 'Save or Share CSV File'
+        dialogTitle: 'Save or Share Texhub CSV File'
       });
     } catch (err: unknown) {
       console.warn('Native CSV share failed, attempting fallback download:', err);

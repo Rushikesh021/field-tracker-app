@@ -30,7 +30,6 @@ import {
 } from 'firebase/firestore';
 import type { Timestamp } from 'firebase/firestore';
 import {
-  Building2,
   Phone,
   Cpu,
   Gauge,
@@ -55,7 +54,9 @@ import {
   Compass,
   User as UserIcon,
   Shield,
-  Layers
+  Layers,
+  Scissors,
+  Building
 } from 'lucide-react';
 import { AdminPortalView } from './components/AdminPortalView';
 import { ImageLightboxModal } from './components/ImageLightboxModal';
@@ -77,7 +78,13 @@ import {
 export interface ClientRecord {
   id?: string;
   partyName: string;
+  contactPerson?: string;
   contactNumber: string;
+  gstNumber?: string;
+  cityMarket?: string;
+  fabricType?: string;
+  weaveSpecs?: string;
+  requirementType?: string;
   machineCount: number;
   monthlyCapacity: string;
   address: string;
@@ -90,6 +97,24 @@ export interface ClientRecord {
 }
 
 const INTAKE_DRAFT_KEY = 'field_tracker_intake_draft';
+
+const FABRIC_TYPES = [
+  'Cotton Woven Dobby',
+  'Cotton Woven Plain / Poplin',
+  'Oxford Weave',
+  'Twill / Drill',
+  'Jacquard Cotton',
+  'Linen / Cotton Blend',
+  'Satin / Stripe Dobby',
+  'Custom Make-to-Order Weave'
+];
+
+const REQUIREMENT_TYPES = [
+  'Make to Order Weaving',
+  'Fabric Sample Development',
+  'Bulk Production Weaving',
+  'Custom Dobby Design Inquiry'
+];
 
 export default function App() {
   // Current user & role state
@@ -109,9 +134,15 @@ export default function App() {
   // Agent Navigation Tab: 'intake' | 'submissions'
   const [agentActiveTab, setAgentActiveTab] = useState<'intake' | 'submissions'>('intake');
 
-  // Intake Form State with Offline Form Preservation
+  // Textile Intake Form State
   const [partyName, setPartyName] = useState('');
+  const [contactPerson, setContactPerson] = useState('');
   const [contactNumber, setContactNumber] = useState('');
+  const [gstNumber, setGstNumber] = useState('');
+  const [cityMarket, setCityMarket] = useState('');
+  const [fabricType, setFabricType] = useState('Cotton Woven Dobby');
+  const [weaveSpecs, setWeaveSpecs] = useState('');
+  const [requirementType, setRequirementType] = useState('Make to Order Weaving');
   const [machineCount, setMachineCount] = useState<string>('');
   const [monthlyCapacity, setMonthlyCapacity] = useState('');
   const [address, setAddress] = useState('');
@@ -133,7 +164,13 @@ export default function App() {
   // Edit Entry State
   const [editingClient, setEditingClient] = useState<ClientRecord | null>(null);
   const [editPartyName, setEditPartyName] = useState('');
+  const [editContactPerson, setEditContactPerson] = useState('');
   const [editContactNumber, setEditContactNumber] = useState('');
+  const [editGstNumber, setEditGstNumber] = useState('');
+  const [editCityMarket, setEditCityMarket] = useState('');
+  const [editFabricType, setEditFabricType] = useState('Cotton Woven Dobby');
+  const [editWeaveSpecs, setEditWeaveSpecs] = useState('');
+  const [editRequirementType, setEditRequirementType] = useState('Make to Order Weaving');
   const [editMachineCount, setEditMachineCount] = useState('');
   const [editMonthlyCapacity, setEditMonthlyCapacity] = useState('');
   const [editAddress, setEditAddress] = useState('');
@@ -193,7 +230,13 @@ export default function App() {
       if (savedDraft) {
         const parsed = JSON.parse(savedDraft);
         if (parsed.partyName) setPartyName(parsed.partyName);
+        if (parsed.contactPerson) setContactPerson(parsed.contactPerson);
         if (parsed.contactNumber) setContactNumber(parsed.contactNumber);
+        if (parsed.gstNumber) setGstNumber(parsed.gstNumber);
+        if (parsed.cityMarket) setCityMarket(parsed.cityMarket);
+        if (parsed.fabricType) setFabricType(parsed.fabricType);
+        if (parsed.weaveSpecs) setWeaveSpecs(parsed.weaveSpecs);
+        if (parsed.requirementType) setRequirementType(parsed.requirementType);
         if (parsed.machineCount) setMachineCount(parsed.machineCount);
         if (parsed.monthlyCapacity) setMonthlyCapacity(parsed.monthlyCapacity);
         if (parsed.address) setAddress(parsed.address);
@@ -205,13 +248,19 @@ export default function App() {
 
   // Save active form inputs to offline draft cache
   useEffect(() => {
-    if (partyName || contactNumber || machineCount || monthlyCapacity || address) {
+    if (partyName || contactNumber || contactPerson || machineCount || monthlyCapacity || address) {
       try {
         localStorage.setItem(
           INTAKE_DRAFT_KEY,
           JSON.stringify({
             partyName,
+            contactPerson,
             contactNumber,
+            gstNumber,
+            cityMarket,
+            fabricType,
+            weaveSpecs,
+            requirementType,
             machineCount,
             monthlyCapacity,
             address
@@ -221,7 +270,19 @@ export default function App() {
         console.warn('Error saving draft:', e);
       }
     }
-  }, [partyName, contactNumber, machineCount, monthlyCapacity, address]);
+  }, [
+    partyName,
+    contactPerson,
+    contactNumber,
+    gstNumber,
+    cityMarket,
+    fabricType,
+    weaveSpecs,
+    requirementType,
+    machineCount,
+    monthlyCapacity,
+    address
+  ]);
 
   // Initialize Native Features: Google Auth, Status Bar, Native Permissions, Hardware Back Button
   useEffect(() => {
@@ -337,31 +398,29 @@ export default function App() {
             const currentStatus = record.status;
 
             if (prevStatus && prevStatus !== currentStatus) {
-              // Status changed! (e.g. from submitted to verified or rejected)
               if (currentStatus === 'verified') {
                 playNotificationSound();
                 incrementAppBadgeCount();
                 sendDeviceNotification(
-                  `Submission Update: ${record.partyName} marked as Verified`,
-                  `Your client entry for "${record.partyName}" has been approved and verified by the Admin.`
+                  `Texhub Order Verified: ${record.partyName}`,
+                  `Your client intake for "${record.partyName}" has been approved & verified by Admin.`
                 );
-                setActionSuccess(`Submission Update: "${record.partyName}" marked as Verified.`);
+                setActionSuccess(`Order Update: "${record.partyName}" marked as Verified.`);
                 setTimeout(() => setActionSuccess(null), 6000);
               } else if (currentStatus === 'rejected') {
                 playNotificationSound();
                 incrementAppBadgeCount();
                 sendDeviceNotification(
-                  `Submission Update: ${record.partyName} marked as Rejected`,
+                  `Texhub Order Update: ${record.partyName}`,
                   `Your client entry for "${record.partyName}" was marked as rejected by Admin.`
                 );
-                setActionSuccess(`Submission Update: "${record.partyName}" marked as Rejected.`);
+                setActionSuccess(`Order Update: "${record.partyName}" marked as Rejected.`);
                 setTimeout(() => setActionSuccess(null), 6000);
               }
             }
           });
         }
 
-        // Update status map
         const newStatusMap = new Map<string, string>();
         records.forEach((r) => {
           if (r.id) newStatusMap.set(r.id, r.status);
@@ -479,12 +538,12 @@ export default function App() {
     );
   };
 
-  // TRUE DIRECT CAMERA CAPTURE (bypasses gallery picker)
+  // Direct Native Camera Viewfinder
   const handleTakePhoto = async () => {
     setPhotoError(null);
     const availableSlots = MAX_PHOTOS - photos.length;
     if (availableSlots <= 0) {
-      setPhotoError(`Maximum ${MAX_PHOTOS} photos allowed. Please remove a photo to take a new one.`);
+      setPhotoError(`Maximum ${MAX_PHOTOS} swatch photos allowed.`);
       return;
     }
 
@@ -493,7 +552,7 @@ export default function App() {
         quality: 85,
         allowEditing: false,
         resultType: CameraResultType.DataUrl,
-        source: CameraSource.Camera, // Direct Camera viewfinder
+        source: CameraSource.Camera,
       });
 
       if (photo.dataUrl) {
@@ -503,7 +562,7 @@ export default function App() {
           setPhotos((prev) => [...prev, base64].slice(0, MAX_PHOTOS));
         } catch (err: unknown) {
           const error = err as { message?: string };
-          setPhotoError(error.message || 'Failed to process photo from camera.');
+          setPhotoError(error.message || 'Failed to process swatch photo.');
         } finally {
           setIsCompressing(false);
         }
@@ -513,12 +572,11 @@ export default function App() {
       if (error?.message && (error.message.includes('User cancelled') || error.message.includes('cancelled') || error.message.includes('No image picked'))) {
         return;
       }
-      // Web browser fallback to HTML camera capture input
       cameraInputRef.current?.click();
     }
   };
 
-  // Handle Photo File Selection from Gallery
+  // Gallery Photo Selection
   const handlePhotoFiles = async (files: FileList | File[]) => {
     setPhotoError(null);
     const fileArray = Array.from(files);
@@ -526,7 +584,7 @@ export default function App() {
 
     const availableSlots = MAX_PHOTOS - photos.length;
     if (availableSlots <= 0) {
-      setPhotoError(`Maximum ${MAX_PHOTOS} photos allowed.`);
+      setPhotoError(`Maximum ${MAX_PHOTOS} swatch photos allowed.`);
       return;
     }
 
@@ -557,7 +615,7 @@ export default function App() {
     setPhotoError(null);
   };
 
-  const openLightbox = (photosList: string[], startIndex = 0, title = 'Inspection') => {
+  const openLightbox = (photosList: string[], startIndex = 0, title = 'Fabric Swatch Inspection') => {
     setLightboxPhotos(photosList);
     setLightboxIndex(startIndex);
     setLightboxTitle(title);
@@ -567,12 +625,18 @@ export default function App() {
   // Start Editing a client record
   const handleStartEdit = (client: ClientRecord) => {
     if (client.status === 'verified') {
-      alert('This entry has already been verified by an Administrator and cannot be modified.');
+      alert('This order has already been verified by an Administrator and cannot be modified.');
       return;
     }
     setEditingClient(client);
     setEditPartyName(client.partyName || '');
+    setEditContactPerson(client.contactPerson || '');
     setEditContactNumber(client.contactNumber || '');
+    setEditGstNumber(client.gstNumber || '');
+    setEditCityMarket(client.cityMarket || '');
+    setEditFabricType(client.fabricType || 'Cotton Woven Dobby');
+    setEditWeaveSpecs(client.weaveSpecs || '');
+    setEditRequirementType(client.requirementType || 'Make to Order Weaving');
     setEditMachineCount(String(client.machineCount ?? ''));
     setEditMonthlyCapacity(client.monthlyCapacity || '');
     setEditAddress(client.address || '');
@@ -605,7 +669,7 @@ export default function App() {
           setEditPhotos((prev) => [...prev, base64].slice(0, MAX_PHOTOS));
         } catch (err: unknown) {
           const error = err as { message?: string };
-          setEditPhotoError(error.message || 'Failed to compress photo.');
+          setEditPhotoError(error.message || 'Failed to compress swatch photo.');
         } finally {
           setIsEditCompressing(false);
         }
@@ -673,7 +737,7 @@ export default function App() {
 
     const countNum = parseInt(editMachineCount, 10);
     if (isNaN(countNum) || countNum < 0) {
-      setEditError('Machine count must be a non-negative number.');
+      setEditError('Looms/Machine count must be a non-negative number.');
       return;
     }
 
@@ -684,7 +748,13 @@ export default function App() {
       const clientRef = doc(db, 'clients', editingClient.id);
       await updateDoc(clientRef, {
         partyName: editPartyName.trim(),
+        contactPerson: editContactPerson.trim(),
         contactNumber: editContactNumber.trim(),
+        gstNumber: editGstNumber.trim(),
+        cityMarket: editCityMarket.trim(),
+        fabricType: editFabricType,
+        weaveSpecs: editWeaveSpecs.trim(),
+        requirementType: editRequirementType,
         machineCount: countNum,
         monthlyCapacity: editMonthlyCapacity.trim(),
         address: editAddress.trim(),
@@ -693,11 +763,11 @@ export default function App() {
       });
 
       setEditingClient(null);
-      setActionSuccess(`Record "${editPartyName.trim()}" updated successfully.`);
+      setActionSuccess(`Order "${editPartyName.trim()}" updated successfully.`);
       setTimeout(() => setActionSuccess(null), 4000);
     } catch (err: unknown) {
       const error = err as { message?: string };
-      setEditError(error.message || 'Failed to update record.');
+      setEditError(error.message || 'Failed to update order record.');
     } finally {
       setIsSavingEdit(false);
     }
@@ -707,7 +777,7 @@ export default function App() {
     if (!deletingClient || !deletingClient.id) return;
 
     if (deletingClient.status === 'verified') {
-      alert('Verified entries cannot be deleted.');
+      alert('Verified orders cannot be deleted.');
       setDeletingClient(null);
       return;
     }
@@ -717,7 +787,7 @@ export default function App() {
     try {
       await deleteDoc(doc(db, 'clients', deletingClient.id));
       setDeletingClient(null);
-      setActionSuccess(`Record "${deletedName}" was deleted.`);
+      setActionSuccess(`Order "${deletedName}" was deleted.`);
       setTimeout(() => setActionSuccess(null), 4000);
     } catch (err: unknown) {
       const error = err as { message?: string };
@@ -727,7 +797,7 @@ export default function App() {
     }
   };
 
-  // Google OAuth Sign In (Native Android & Web fallback)
+  // Google OAuth Sign In
   const handleGoogleSignIn = async () => {
     setAuthError(null);
     setAuthSubmitting(true);
@@ -803,7 +873,7 @@ export default function App() {
     }
   };
 
-  // Submit Intake Form
+  // Submit Textile Intake Form
   const handleSubmitForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser) return;
@@ -815,7 +885,7 @@ export default function App() {
 
     const countNum = parseInt(machineCount, 10);
     if (isNaN(countNum) || countNum < 0) {
-      setSubmitError('Machine count must be a valid non-negative number.');
+      setSubmitError('Looms/Machine count must be a valid non-negative number.');
       return;
     }
 
@@ -828,25 +898,37 @@ export default function App() {
         ? `${currentUser.displayName} (${currentUser.email})`
         : (currentUser.email || 'Agent User');
 
-      const newRecord = {
+      const newRecord: Omit<ClientRecord, 'id'> = {
         partyName: partyName.trim(),
+        contactPerson: contactPerson.trim(),
         contactNumber: contactNumber.trim(),
+        gstNumber: gstNumber.trim(),
+        cityMarket: cityMarket.trim(),
+        fabricType,
+        weaveSpecs: weaveSpecs.trim(),
+        requirementType,
         machineCount: countNum,
         monthlyCapacity: monthlyCapacity.trim(),
         address: address.trim(),
         photos: photos,
-        status: 'submitted' as const,
+        status: 'submitted',
         submittedBy: submitterName,
         submittedByUid: currentUser.uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
+        createdAt: serverTimestamp() as Timestamp,
+        updatedAt: serverTimestamp() as Timestamp
       };
 
       await addDoc(collection(db, 'clients'), newRecord);
 
       // Reset form and clear offline draft
       setPartyName('');
+      setContactPerson('');
       setContactNumber('');
+      setGstNumber('');
+      setCityMarket('');
+      setFabricType('Cotton Woven Dobby');
+      setWeaveSpecs('');
+      setRequirementType('Make to Order Weaving');
       setMachineCount('');
       setMonthlyCapacity('');
       setAddress('');
@@ -866,7 +948,7 @@ export default function App() {
       }, 5000);
     } catch (err: unknown) {
       const error = err as { message?: string };
-      setSubmitError(error.message || 'Failed to submit client record. Please check connection.');
+      setSubmitError(error.message || 'Failed to submit order record. Please check connection.');
     } finally {
       setIsSubmitting(false);
     }
@@ -882,14 +964,16 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
         <div className="flex flex-col items-center gap-3 text-slate-200">
-          <RefreshCw className="w-8 h-8 animate-spin text-indigo-400" />
-          <p className="text-sm font-medium tracking-wide">Starting Field Tracker...</p>
+          <RefreshCw className="w-8 h-8 animate-spin text-[#FF5722]" />
+          <p className="text-sm font-bold tracking-wider uppercase">
+            <span className="text-white">TEX</span><span className="text-[#FF5722]">HUB</span> INNOVATIONS
+          </p>
         </div>
       </div>
     );
   }
 
-  // If user is Admin, render the Admin Portal View automatically!
+  // If user is Admin, render the Admin Portal View automatically
   if (currentUser && userProfile?.role === 'admin') {
     return (
       <AdminPortalView
@@ -899,19 +983,27 @@ export default function App() {
     );
   }
 
-  // 1. UNIFIED LOGIN SCREEN (For Both Agents and Admins)
+  // 1. UNIFIED LOGIN SCREEN (TEXHUB INNOVATIONS ENTERPRISE BRANDING)
   if (!currentUser) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 flex flex-col justify-center py-8 sm:py-12 sm:px-6 lg:px-8 px-4 antialiased">
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex flex-col justify-center py-8 sm:py-12 sm:px-6 lg:px-8 px-4 antialiased">
         <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-indigo-600 shadow-xl shadow-indigo-600/30 mb-4 text-white">
-            <Building2 className="w-8 h-8" />
+          {/* Stylized Texhub Logo Badge */}
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-700 shadow-2xl mb-3">
+            <Scissors className="w-8 h-8 text-[#FF5722]" />
           </div>
-          <h2 className="text-3xl font-black text-white tracking-tight">
-            Field Tracker
-          </h2>
-          <p className="mt-1.5 text-sm text-slate-400">
-            Enterprise Mobile Client Intake & Management
+
+          <h1 className="text-3xl sm:text-4xl font-black tracking-tight flex items-center justify-center gap-1">
+            <span className="text-white">TEX</span>
+            <span className="text-[#FF5722]">HUB</span>
+          </h1>
+
+          <p className="text-xs font-bold text-slate-300 uppercase tracking-widest mt-1">
+            Fabric Designing | Developing | Weaving
+          </p>
+
+          <p className="text-[11px] text-slate-400 italic mt-0.5 max-w-xs mx-auto">
+            Expert in make to order "Cotton woven Dobby Fabrics"
           </p>
         </div>
 
@@ -964,7 +1056,7 @@ export default function App() {
                 onClick={() => { setIsRegistering(false); setAuthError(null); }}
                 className={`w-1/2 py-2 text-sm font-bold rounded-lg transition-all ${
                   !isRegistering
-                    ? 'bg-indigo-600 text-white shadow-md'
+                    ? 'bg-[#FF5722] text-white shadow-md'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -975,7 +1067,7 @@ export default function App() {
                 onClick={() => { setIsRegistering(true); setAuthError(null); }}
                 className={`w-1/2 py-2 text-sm font-bold rounded-lg transition-all ${
                   isRegistering
-                    ? 'bg-indigo-600 text-white shadow-md'
+                    ? 'bg-[#FF5722] text-white shadow-md'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -995,7 +1087,7 @@ export default function App() {
                     onClick={() => setSelectedSignupRole('agent')}
                     className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition ${
                       selectedSignupRole === 'agent'
-                        ? 'bg-indigo-600/20 border-indigo-500 text-indigo-300 ring-2 ring-indigo-500/30'
+                        ? 'bg-[#FF5722]/20 border-[#FF5722] text-[#FF5722] ring-2 ring-[#FF5722]/30'
                         : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
                     }`}
                   >
@@ -1008,7 +1100,7 @@ export default function App() {
                     onClick={() => setSelectedSignupRole('admin')}
                     className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition ${
                       selectedSignupRole === 'admin'
-                        ? 'bg-indigo-600/20 border-indigo-500 text-indigo-300 ring-2 ring-indigo-500/30'
+                        ? 'bg-[#FF5722]/20 border-[#FF5722] text-[#FF5722] ring-2 ring-[#FF5722]/30'
                         : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
                     }`}
                   >
@@ -1036,8 +1128,8 @@ export default function App() {
                   required
                   value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
-                  placeholder="user@example.com"
-                  className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600 transition"
+                  placeholder="agent@texhub.in"
+                  className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] focus:border-[#FF5722] placeholder-slate-600 transition"
                 />
               </div>
 
@@ -1052,7 +1144,7 @@ export default function App() {
                     value={authPassword}
                     onChange={(e) => setAuthPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600 transition pr-10"
+                    className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] focus:border-[#FF5722] placeholder-slate-600 transition pr-10"
                   />
                   <button
                     type="button"
@@ -1067,7 +1159,7 @@ export default function App() {
               <button
                 type="submit"
                 disabled={authSubmitting}
-                className="w-full mt-3 py-3.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white font-bold text-sm shadow-lg shadow-indigo-600/30 transition disabled:opacity-60 flex items-center justify-center gap-2"
+                className="w-full mt-3 py-3.5 px-4 rounded-xl bg-[#FF5722] hover:bg-[#E64A19] active:scale-[0.98] text-white font-bold text-sm shadow-lg shadow-[#FF5722]/30 transition disabled:opacity-60 flex items-center justify-center gap-2"
               >
                 {authSubmitting ? (
                   <RefreshCw className="w-4 h-4 animate-spin" />
@@ -1083,7 +1175,7 @@ export default function App() {
     );
   }
 
-  // 2. LOGGED IN AGENT PORTAL
+  // 2. LOGGED IN AGENT PORTAL (TEXHUB ENTERPRISE BRANDING)
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col antialiased">
       {/* Top Header */}
@@ -1093,17 +1185,21 @@ export default function App() {
       >
         <div className="max-w-4xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-600/30">
-              <Building2 className="w-5 h-5" />
+            <div className="w-10 h-10 rounded-xl bg-slate-950 border border-slate-800 text-[#FF5722] flex items-center justify-center shadow-md">
+              <Scissors className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-base sm:text-lg font-extrabold text-white tracking-tight">Field Tracker</h1>
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                  AGENT
+                <h1 className="text-base sm:text-lg font-black tracking-tight">
+                  <span className="text-white">TEX</span><span className="text-[#FF5722]">HUB</span>
+                </h1>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#FF5722]/20 text-[#FF5722] border border-[#FF5722]/30">
+                  AGENT PORTAL
                 </span>
               </div>
-              <p className="text-xs text-slate-400">Mobile Client Onboarding</p>
+              <p className="text-[11px] text-slate-400 truncate max-w-[200px] sm:max-w-none">
+                Fabric Designing | Developing | Weaving
+              </p>
             </div>
           </div>
 
@@ -1115,7 +1211,7 @@ export default function App() {
                 className="w-9 h-9 rounded-full object-cover border border-slate-700 shadow-xs"
               />
             ) : (
-              <div className="w-9 h-9 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 flex items-center justify-center font-bold text-xs">
+              <div className="w-9 h-9 rounded-full bg-[#FF5722]/20 text-[#FF5722] border border-[#FF5722]/40 flex items-center justify-center font-bold text-xs">
                 {currentUser.displayName ? currentUser.displayName.charAt(0).toUpperCase() : currentUser.email?.charAt(0).toUpperCase() || 'A'}
               </div>
             )}
@@ -1130,7 +1226,7 @@ export default function App() {
               </span>
             </div>
 
-            {/* Visible Header Logout Button */}
+            {/* Logout Button */}
             <button
               onClick={handleSignOut}
               className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition border border-slate-700"
@@ -1167,12 +1263,12 @@ export default function App() {
             onClick={() => setAgentActiveTab('intake')}
             className={`flex-1 py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-2 ${
               agentActiveTab === 'intake'
-                ? 'bg-indigo-600 text-white shadow-md'
+                ? 'bg-[#FF5722] text-white shadow-md'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
             <Sparkles className="w-4 h-4" />
-            <span>New Client Intake</span>
+            <span>New Fabric Intake</span>
           </button>
 
           <button
@@ -1180,28 +1276,28 @@ export default function App() {
             onClick={() => setAgentActiveTab('submissions')}
             className={`flex-1 py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-2 ${
               agentActiveTab === 'submissions'
-                ? 'bg-indigo-600 text-white shadow-md'
+                ? 'bg-[#FF5722] text-white shadow-md'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
             <Layers className="w-4 h-4" />
-            <span>My Submissions</span>
+            <span>My Orders & Submissions</span>
             <span className="px-2 py-0.5 rounded-full bg-slate-800 text-[11px] font-extrabold border border-slate-700 text-slate-300">
               {mySubmissions.length}
             </span>
           </button>
         </div>
 
-        {/* TAB 1: NEW CLIENT INTAKE FORM */}
+        {/* TAB 1: NEW CLIENT INTAKE & FABRIC ORDER FORM */}
         {agentActiveTab === 'intake' && (
           <div className="space-y-6">
             {submitSuccess && (
               <div className="rounded-2xl bg-emerald-950/80 border border-emerald-600/50 p-4 shadow-md flex items-start gap-3 animate-in fade-in slide-in-from-top-4 duration-300">
                 <CheckCircle2 className="w-6 h-6 text-emerald-400 flex-shrink-0 mt-0.5" />
                 <div>
-                  <h3 className="text-sm font-bold text-emerald-200">Client Entry Submitted Successfully!</h3>
+                  <h3 className="text-sm font-bold text-emerald-200">Fabric Order Recorded Successfully!</h3>
                   <p className="text-xs text-emerald-400/90 mt-0.5">
-                    Data has been recorded and submitted for Admin verification. You can track its status in the "My Submissions" tab.
+                    Order has been submitted for Admin verification. You can track review progress under "My Orders & Submissions".
                   </p>
                 </div>
               </div>
@@ -1210,15 +1306,18 @@ export default function App() {
             <div className="bg-slate-900/90 rounded-3xl shadow-xl border border-slate-800 overflow-hidden backdrop-blur-sm">
               <div className="px-6 py-4 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
-                  <Sparkles className="w-5 h-5 text-indigo-400" />
-                  <h2 className="text-base font-bold text-white">Client Registration Form</h2>
+                  <Scissors className="w-5 h-5 text-[#FF5722]" />
+                  <div>
+                    <h2 className="text-base font-bold text-white">Client Intake & Fabric Specifications</h2>
+                    <p className="text-xs text-slate-400">Cotton Woven Dobby & Custom Textile Manufacturing</p>
+                  </div>
                 </div>
-                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                  Direct Field Entry
+                <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-[#FF5722]/20 text-[#FF5722] border border-[#FF5722]/30">
+                  Field Order
                 </span>
               </div>
 
-              <form onSubmit={handleSubmitForm} className="p-6 sm:p-8 space-y-5 sm:space-y-6">
+              <form onSubmit={handleSubmitForm} className="p-6 sm:p-8 space-y-6">
                 {submitError && (
                   <div className="rounded-xl bg-rose-950/70 border border-rose-700/60 p-3.5 text-xs font-medium text-rose-300 flex items-center gap-2">
                     <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
@@ -1226,60 +1325,77 @@ export default function App() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                  {/* Party Name */}
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
-                      Party Name <span className="text-rose-400">*</span>
-                    </label>
-                    <div className="relative">
-                      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
-                        <Building2 className="w-4 h-4" />
-                      </div>
+                {/* Section 1: Client & Mill Details */}
+                <div className="space-y-4">
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2 border-b border-slate-800 pb-2">
+                    <Building className="w-4 h-4 text-[#FF5722]" />
+                    <span>1. Client & Mill Profile</span>
+                  </h3>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Party / Mill Name */}
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                        Client / Mill / Business Name <span className="text-rose-400">*</span>
+                      </label>
                       <input
                         type="text"
                         required
                         value={partyName}
                         onChange={(e) => setPartyName(e.target.value)}
-                        placeholder="e.g. Apex Industrial Garments Pvt Ltd"
-                        className="w-full pl-10 pr-4 py-3.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600 transition"
+                        placeholder="e.g. Vardhman Textile Mills Ltd"
+                        className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] focus:border-[#FF5722] placeholder-slate-600 transition"
                       />
                     </div>
-                  </div>
 
-                  {/* Contact Number + Deduplication */}
-                  <div className="sm:col-span-2">
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">
-                        Contact Number <span className="text-rose-400">*</span>
+                    {/* Contact Person */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                        Contact Person Name
                       </label>
-                      {isCheckingPhone && (
-                        <span className="text-xs text-indigo-400 flex items-center gap-1 font-medium">
-                          <RefreshCw className="w-3 h-3 animate-spin" /> Checking duplicate...
-                        </span>
-                      )}
-                    </div>
-                    <div className="relative">
-                      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
-                        <Phone className="w-4 h-4" />
-                      </div>
                       <input
-                        type="tel"
-                        inputMode="tel"
-                        required
-                        value={contactNumber}
-                        onChange={(e) => setContactNumber(e.target.value)}
-                        placeholder="e.g. +91 98765 43210"
-                        className={`w-full pl-10 pr-4 py-3.5 bg-slate-950 border rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 placeholder-slate-600 transition ${
-                          duplicateClient
-                            ? 'border-amber-500 focus:ring-amber-500'
-                            : 'border-slate-800 focus:ring-indigo-500'
-                        }`}
+                        type="text"
+                        value={contactPerson}
+                        onChange={(e) => setContactPerson(e.target.value)}
+                        placeholder="e.g. Rajesh Sharma (Purchase Mgr)"
+                        className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] focus:border-[#FF5722] placeholder-slate-600 transition"
                       />
+                    </div>
+
+                    {/* Phone / WhatsApp */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">
+                          Phone / WhatsApp <span className="text-rose-400">*</span>
+                        </label>
+                        {isCheckingPhone && (
+                          <span className="text-[11px] text-[#FF5722] flex items-center gap-1 font-medium">
+                            <RefreshCw className="w-3 h-3 animate-spin" /> Checking...
+                          </span>
+                        )}
+                      </div>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                          <Phone className="w-4 h-4" />
+                        </div>
+                        <input
+                          type="tel"
+                          inputMode="tel"
+                          required
+                          value={contactNumber}
+                          onChange={(e) => setContactNumber(e.target.value)}
+                          placeholder="e.g. +91 98765 43210"
+                          className={`w-full pl-10 pr-4 py-3 bg-slate-950 border rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 placeholder-slate-600 transition ${
+                            duplicateClient
+                              ? 'border-amber-500 focus:ring-amber-500'
+                              : 'border-slate-800 focus:ring-[#FF5722]'
+                          }`}
+                        />
+                      </div>
                     </div>
 
                     {duplicateClient && (
-                      <div className="mt-2.5 p-3 rounded-xl bg-amber-950/70 border border-amber-600/60 text-xs text-amber-200 flex items-start gap-2.5">
+                      <div className="sm:col-span-2 p-3 rounded-xl bg-amber-950/70 border border-amber-600/60 text-xs text-amber-200 flex items-start gap-2.5">
                         <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
                         <div>
                           <span className="font-bold">Duplicate Detected:</span> A client with phone{' '}
@@ -1289,187 +1405,275 @@ export default function App() {
                         </div>
                       </div>
                     )}
-                  </div>
 
-                  {/* Machine Count */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
-                      Machine Count <span className="text-rose-400">*</span>
-                    </label>
-                    <div className="relative">
-                      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
-                        <Cpu className="w-4 h-4" />
-                      </div>
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        min="0"
-                        required
-                        value={machineCount}
-                        onChange={(e) => setMachineCount(e.target.value)}
-                        placeholder="e.g. 24"
-                        className="w-full pl-10 pr-4 py-3.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600 transition"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Monthly Capacity */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
-                      Monthly Capacity <span className="text-rose-400">*</span>
-                    </label>
-                    <div className="relative">
-                      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
-                        <Gauge className="w-4 h-4" />
-                      </div>
+                    {/* GST Number */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                        GST / Business Tax ID
+                      </label>
                       <input
                         type="text"
-                        required
-                        value={monthlyCapacity}
-                        onChange={(e) => setMonthlyCapacity(e.target.value)}
-                        placeholder="e.g. 50,000 meters / month"
-                        className="w-full pl-10 pr-4 py-3.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600 transition"
+                        value={gstNumber}
+                        onChange={(e) => setGstNumber(e.target.value.toUpperCase())}
+                        placeholder="e.g. 24AAAAA0000A1Z5"
+                        className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] focus:border-[#FF5722] placeholder-slate-600 transition uppercase"
+                      />
+                    </div>
+
+                    {/* City / Textile Market */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                        City / Textile Market
+                      </label>
+                      <input
+                        type="text"
+                        value={cityMarket}
+                        onChange={(e) => setCityMarket(e.target.value)}
+                        placeholder="e.g. Surat / Ichalkaranji / Ahmedabad"
+                        className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] focus:border-[#FF5722] placeholder-slate-600 transition"
                       />
                     </div>
                   </div>
+                </div>
 
-                  {/* Address with GPS Autofill Button */}
-                  <div className="sm:col-span-2">
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">
-                        Factory / Office Address <span className="text-rose-400">*</span>
+                {/* Section 2: Fabric & Order Specifications */}
+                <div className="space-y-4">
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2 border-b border-slate-800 pb-2">
+                    <Scissors className="w-4 h-4 text-[#FF5722]" />
+                    <span>2. Fabric & Weaving Specifications</span>
+                  </h3>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Fabric Type */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                        Fabric Type <span className="text-rose-400">*</span>
                       </label>
-                      <button
-                        type="button"
-                        onClick={handleGetCurrentLocation}
-                        disabled={isLocating}
-                        className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-300 hover:text-white bg-indigo-500/20 hover:bg-indigo-500/30 px-2.5 py-1 rounded-lg transition border border-indigo-500/30 disabled:opacity-50 active:scale-95"
+                      <select
+                        value={fabricType}
+                        onChange={(e) => setFabricType(e.target.value)}
+                        className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] focus:border-[#FF5722] transition"
                       >
-                        <Compass className={`w-3.5 h-3.5 text-indigo-400 ${isLocating ? 'animate-spin' : ''}`} />
-                        <span>{isLocating ? 'Detecting GPS...' : 'Use Current GPS'}</span>
+                        {FABRIC_TYPES.map((type) => (
+                          <option key={type} value={type}>
+                            {type}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Requirement Type */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                        Requirement Type <span className="text-rose-400">*</span>
+                      </label>
+                      <select
+                        value={requirementType}
+                        onChange={(e) => setRequirementType(e.target.value)}
+                        className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] focus:border-[#FF5722] transition"
+                      >
+                        {REQUIREMENT_TYPES.map((req) => (
+                          <option key={req} value={req}>
+                            {req}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Weave Specs / Quality Notes */}
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                        Weave / Quality Specs (Counts / Construction / GSM)
+                      </label>
+                      <input
+                        type="text"
+                        value={weaveSpecs}
+                        onChange={(e) => setWeaveSpecs(e.target.value)}
+                        placeholder="e.g. 40s x 40s / 132 x 72 / 125 GSM / Dobby Stripe"
+                        className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] focus:border-[#FF5722] placeholder-slate-600 transition"
+                      />
+                    </div>
+
+                    {/* Machine / Looms Count */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                        Loom / Machine Count <span className="text-rose-400">*</span>
+                      </label>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                          <Cpu className="w-4 h-4" />
+                        </div>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min="0"
+                          required
+                          value={machineCount}
+                          onChange={(e) => setMachineCount(e.target.value)}
+                          placeholder="e.g. 36"
+                          className="w-full pl-10 pr-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] focus:border-[#FF5722] placeholder-slate-600 transition"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Monthly Capacity */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                        Monthly Capacity / Order Volume <span className="text-rose-400">*</span>
+                      </label>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                          <Gauge className="w-4 h-4" />
+                        </div>
+                        <input
+                          type="text"
+                          required
+                          value={monthlyCapacity}
+                          onChange={(e) => setMonthlyCapacity(e.target.value)}
+                          placeholder="e.g. 60,000 meters / month"
+                          className="w-full pl-10 pr-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] focus:border-[#FF5722] placeholder-slate-600 transition"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Section 3: Factory / Mill Address */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">
+                      Mill / Factory Address <span className="text-rose-400">*</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleGetCurrentLocation}
+                      disabled={isLocating}
+                      className="inline-flex items-center gap-1.5 text-xs font-bold text-[#FF5722] hover:text-white bg-[#FF5722]/10 hover:bg-[#FF5722]/20 px-2.5 py-1 rounded-lg transition border border-[#FF5722]/30 disabled:opacity-50 active:scale-95"
+                    >
+                      <Compass className={`w-3.5 h-3.5 ${isLocating ? 'animate-spin' : ''}`} />
+                      <span>{isLocating ? 'Detecting GPS...' : 'Use Current GPS'}</span>
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <div className="absolute top-3.5 left-3.5 flex items-start pointer-events-none text-slate-500">
+                      <MapPin className="w-4 h-4" />
+                    </div>
+                    <textarea
+                      rows={3}
+                      required
+                      value={address}
+                      onChange={(e) => setAddress(e.target.value)}
+                      placeholder="e.g. Plot No. 12, Sachin GIDC Industrial Area, Surat, Gujarat"
+                      className="w-full pl-10 pr-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] focus:border-[#FF5722] placeholder-slate-600 transition resize-none"
+                    ></textarea>
+                  </div>
+                </div>
+
+                {/* Section 4: Fabric Swatches & Site Photos */}
+                <div className="space-y-3 pt-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">
+                        Fabric Swatch & Mill Photos <span className="text-slate-500 font-normal normal-case">(Max {MAX_PHOTOS})</span>
+                      </label>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Capture fabric swatch closeup, loom setup, or mill premises.
+                      </p>
+                    </div>
+                    <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300">
+                      {photos.length} / {MAX_PHOTOS} Swatches
+                    </span>
+                  </div>
+
+                  {/* Hidden Inputs */}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={(e) => e.target.files && handlePhotoFiles(e.target.files)}
+                    className="hidden"
+                  />
+                  <input
+                    ref={cameraInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={(e) => e.target.files && handlePhotoFiles(e.target.files)}
+                    className="hidden"
+                  />
+
+                  {photoError && (
+                    <div className="p-3 rounded-xl bg-rose-950/70 border border-rose-700/60 text-xs text-rose-300 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                        <span>{photoError}</span>
+                      </div>
+                      <button type="button" onClick={() => setPhotoError(null)}>
+                        <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
-                    <div className="relative">
-                      <div className="absolute top-3.5 left-3.5 flex items-start pointer-events-none text-slate-500">
-                        <MapPin className="w-4 h-4" />
-                      </div>
-                      <textarea
-                        rows={3}
-                        required
-                        value={address}
-                        onChange={(e) => setAddress(e.target.value)}
-                        placeholder="e.g. Plot No. 45, GIDC Industrial Estate, Sector 2"
-                        className="w-full pl-10 pr-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600 transition resize-none"
-                      ></textarea>
+                  )}
+
+                  {isCompressing && (
+                    <div className="p-3 rounded-xl bg-[#FF5722]/20 border border-[#FF5722]/30 text-xs text-[#FF5722] flex items-center gap-2.5">
+                      <RefreshCw className="w-4 h-4 text-[#FF5722] animate-spin flex-shrink-0" />
+                      <span>Optimizing fabric swatch image on device (1280px)...</span>
                     </div>
-                  </div>
+                  )}
 
-                  {/* Photos Section */}
-                  <div className="sm:col-span-2 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">
-                          Attached Photos <span className="text-slate-500 font-normal normal-case">(Max {MAX_PHOTOS})</span>
-                        </label>
-                        <p className="text-[11px] text-slate-400 mt-0.5">
-                          Take photo directly with camera or pick from device gallery.
-                        </p>
-                      </div>
-                      <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300">
-                        {photos.length} / {MAX_PHOTOS} Photos
-                      </span>
-                    </div>
-
-                    {/* Hidden Inputs */}
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      onChange={(e) => e.target.files && handlePhotoFiles(e.target.files)}
-                      className="hidden"
-                    />
-                    <input
-                      ref={cameraInputRef}
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      onChange={(e) => e.target.files && handlePhotoFiles(e.target.files)}
-                      className="hidden"
-                    />
-
-                    {photoError && (
-                      <div className="p-3 rounded-xl bg-rose-950/70 border border-rose-700/60 text-xs text-rose-300 flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
-                          <span>{photoError}</span>
-                        </div>
-                        <button type="button" onClick={() => setPhotoError(null)}>
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    )}
-
-                    {isCompressing && (
-                      <div className="p-3 rounded-xl bg-indigo-500/20 border border-indigo-500/30 text-xs text-indigo-300 flex items-center gap-2.5">
-                        <RefreshCw className="w-4 h-4 text-indigo-400 animate-spin flex-shrink-0" />
-                        <span>Compressing photo on device (1280px)...</span>
-                      </div>
-                    )}
-
-                    {/* Photo Thumbnails */}
-                    {photos.length > 0 && (
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                        {photos.map((photoBase64, index) => (
-                          <div
-                            key={index}
-                            className="relative group rounded-xl overflow-hidden border border-slate-700 bg-slate-900 shadow-sm aspect-video sm:aspect-square flex items-center justify-center"
+                  {/* Photo Thumbnails */}
+                  {photos.length > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {photos.map((photoBase64, index) => (
+                        <div
+                          key={index}
+                          className="relative group rounded-xl overflow-hidden border border-slate-700 bg-slate-900 shadow-sm aspect-video sm:aspect-square flex items-center justify-center"
+                        >
+                          <img
+                            src={photoBase64}
+                            alt={`Swatch Preview ${index + 1}`}
+                            className="w-full h-full object-cover group-hover:opacity-90 transition cursor-zoom-in"
+                            onClick={() => openLightbox(photos, index, `Swatch #${index + 1} - ${partyName || 'Preview'}`)}
+                          />
+                          <span className="absolute bottom-2 left-2 px-2 py-0.5 bg-black/80 text-white rounded text-[10px] font-bold">
+                            Swatch #{index + 1}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePhoto(index)}
+                            className="absolute top-2 right-2 p-1.5 rounded-full bg-slate-900/80 hover:bg-rose-600 text-white shadow-md transition z-10"
+                            title="Remove photo"
                           >
-                            <img
-                              src={photoBase64}
-                              alt={`Preview ${index + 1}`}
-                              className="w-full h-full object-cover group-hover:opacity-90 transition cursor-zoom-in"
-                              onClick={() => openLightbox(photos, index, `Intake Photo #${index + 1}`)}
-                            />
-                            <span className="absolute bottom-2 left-2 px-2 py-0.5 bg-black/80 text-white rounded text-[10px] font-bold">
-                              Photo #{index + 1}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleRemovePhoto(index)}
-                              className="absolute top-2 right-2 p-1.5 rounded-full bg-slate-900/80 hover:bg-rose-600 text-white shadow-md transition z-10"
-                              title="Remove photo"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
-                    {/* Big Action Buttons (Take Photo vs Choose from Gallery) */}
-                    {photos.length < MAX_PHOTOS && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                        <button
-                          type="button"
-                          onClick={handleTakePhoto}
-                          className="py-3.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white font-bold text-sm shadow-md shadow-indigo-600/30 transition flex items-center justify-center gap-2.5"
-                        >
-                          <Camera className="w-5 h-5" />
-                          <span>Take Photo with Camera</span>
-                        </button>
+                  {/* Action Buttons */}
+                  {photos.length < MAX_PHOTOS && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleTakePhoto}
+                        className="py-3.5 px-4 rounded-xl bg-[#FF5722] hover:bg-[#E64A19] active:scale-[0.98] text-white font-bold text-sm shadow-md shadow-[#FF5722]/30 transition flex items-center justify-center gap-2.5"
+                      >
+                        <Camera className="w-5 h-5" />
+                        <span>Capture Swatch with Camera</span>
+                      </button>
 
-                        <button
-                          type="button"
-                          onClick={() => fileInputRef.current?.click()}
-                          className="py-3.5 px-4 rounded-xl bg-slate-850 hover:bg-slate-800 border border-slate-700 text-slate-200 font-bold text-sm transition flex items-center justify-center gap-2.5 active:scale-[0.98]"
-                        >
-                          <ImageIcon className="w-5 h-5 text-indigo-400" />
-                          <span>Choose from Gallery</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="py-3.5 px-4 rounded-xl bg-slate-850 hover:bg-slate-800 border border-slate-700 text-slate-200 font-bold text-sm transition flex items-center justify-center gap-2.5 active:scale-[0.98]"
+                      >
+                        <ImageIcon className="w-5 h-5 text-[#FF5722]" />
+                        <span>Choose from Gallery</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Submit Action Bar */}
@@ -1482,14 +1686,14 @@ export default function App() {
                   <button
                     type="submit"
                     disabled={isSubmitting || isCompressing}
-                    className="w-full sm:w-auto px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white font-bold text-sm rounded-xl shadow-lg shadow-indigo-600/30 transition flex items-center justify-center gap-2 disabled:opacity-60"
+                    className="w-full sm:w-auto px-8 py-3.5 bg-[#FF5722] hover:bg-[#E64A19] active:scale-[0.98] text-white font-bold text-sm rounded-xl shadow-lg shadow-[#FF5722]/30 transition flex items-center justify-center gap-2 disabled:opacity-60"
                   >
                     {isSubmitting ? (
                       <RefreshCw className="w-4 h-4 animate-spin" />
                     ) : (
                       <Send className="w-4 h-4" />
                     )}
-                    <span>Submit Client Record</span>
+                    <span>Submit Fabric Order Record</span>
                   </button>
                 </div>
               </form>
@@ -1497,7 +1701,7 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 2: MY SUBMISSIONS HISTORY & REAL-TIME STATUS */}
+        {/* TAB 2: MY SUBMISSIONS & REAL-TIME STATUS */}
         {agentActiveTab === 'submissions' && (
           <div className="space-y-4">
             {/* Filter Pills */}
@@ -1513,7 +1717,7 @@ export default function App() {
                       onClick={() => setSubmissionFilter(filter)}
                       className={`px-3 py-1.5 text-xs font-bold rounded-lg capitalize transition flex items-center gap-1.5 ${
                         submissionFilter === filter
-                          ? 'bg-indigo-600 text-white shadow-sm'
+                          ? 'bg-[#FF5722] text-white shadow-sm'
                           : 'text-slate-400 hover:text-white'
                       }`}
                     >
@@ -1525,19 +1729,19 @@ export default function App() {
               </div>
 
               {submissionsLoading && (
-                <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+                <RefreshCw className="w-4 h-4 animate-spin text-[#FF5722]" />
               )}
             </div>
 
             {/* Submissions List */}
             {filteredSubmissions.length === 0 ? (
               <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-12 text-center text-slate-400">
-                <Building2 className="w-12 h-12 mx-auto mb-3 text-slate-700" />
-                <p className="text-sm font-bold text-slate-300">No submissions found</p>
+                <Scissors className="w-12 h-12 mx-auto mb-3 text-slate-700" />
+                <p className="text-sm font-bold text-slate-300">No fabric orders found</p>
                 <p className="text-xs text-slate-500 mt-1">
                   {submissionFilter === 'all'
-                    ? 'You have not submitted any client records yet.'
-                    : `No submissions with status "${submissionFilter}".`}
+                    ? 'You have not submitted any client orders yet.'
+                    : `No orders with status "${submissionFilter}".`}
                 </p>
               </div>
             ) : (
@@ -1567,19 +1771,32 @@ export default function App() {
                           </div>
                         ) : (
                           <div className="w-14 h-14 rounded-xl bg-slate-800 border border-slate-700 flex-shrink-0 flex items-center justify-center text-slate-500">
-                            <Building2 className="w-6 h-6" />
+                            <Scissors className="w-6 h-6" />
                           </div>
                         )}
 
                         <div className="min-w-0">
-                          <h4 className="text-base font-bold text-white truncate">{item.partyName}</h4>
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-base font-bold text-white truncate">{item.partyName}</h4>
+                            {item.fabricType && (
+                              <span className="hidden sm:inline-block text-[10px] px-2 py-0.5 bg-[#FF5722]/20 text-[#FF5722] rounded-full border border-[#FF5722]/30 font-semibold truncate">
+                                {item.fabricType}
+                              </span>
+                            )}
+                          </div>
                           <p className="text-xs text-slate-400 mt-0.5 line-clamp-1">{item.address}</p>
                           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-400 mt-1.5">
                             <span className="font-mono text-slate-300">{item.contactNumber}</span>
                             <span>•</span>
-                            <span>{item.machineCount} machines</span>
+                            <span>{item.machineCount} looms</span>
                             <span>•</span>
                             <span>{item.monthlyCapacity}</span>
+                            {item.requirementType && (
+                              <>
+                                <span>•</span>
+                                <span className="text-[#FF5722] font-medium">{item.requirementType}</span>
+                              </>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1598,13 +1815,12 @@ export default function App() {
                           {item.status}
                         </span>
 
-                        {/* Modifiable if unverified */}
                         {item.status !== 'verified' && (
                           <button
                             type="button"
                             onClick={() => handleStartEdit(item)}
-                            className="p-2 rounded-xl border border-slate-700 hover:border-indigo-500 hover:bg-indigo-600/20 text-slate-300 hover:text-indigo-300 transition flex items-center gap-1.5 text-xs font-bold active:scale-95"
-                            title="Modify this entry"
+                            className="p-2 rounded-xl border border-slate-700 hover:border-[#FF5722] hover:bg-[#FF5722]/20 text-slate-300 hover:text-[#FF5722] transition flex items-center gap-1.5 text-xs font-bold active:scale-95"
+                            title="Modify order"
                           >
                             <Pencil className="w-3.5 h-3.5" />
                             <span className="hidden sm:inline">Modify</span>
@@ -1616,7 +1832,7 @@ export default function App() {
                             type="button"
                             onClick={() => setDeletingClient(item)}
                             className="p-2 rounded-xl border border-slate-700 hover:border-rose-500 hover:bg-rose-500/20 text-slate-400 hover:text-rose-300 transition flex items-center gap-1.5 text-xs font-bold active:scale-95"
-                            title="Delete this entry"
+                            title="Delete order"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                             <span className="hidden sm:inline">Delete</span>
@@ -1638,9 +1854,9 @@ export default function App() {
           <div className="bg-slate-900 rounded-3xl shadow-2xl border border-slate-800 max-w-xl w-full overflow-hidden animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col text-white">
             <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/80 flex-shrink-0">
               <div className="flex items-center gap-2.5">
-                <Pencil className="w-5 h-5 text-indigo-400" />
+                <Scissors className="w-5 h-5 text-[#FF5722]" />
                 <div>
-                  <h3 className="font-bold text-white text-base">Modify Client Entry</h3>
+                  <h3 className="font-bold text-white text-base">Modify Fabric Order</h3>
                   <p className="text-xs text-slate-400 truncate max-w-xs">{editingClient.partyName}</p>
                 </div>
               </div>
@@ -1663,35 +1879,105 @@ export default function App() {
 
               <div>
                 <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
-                  Party Name <span className="text-rose-400">*</span>
+                  Client / Mill Name <span className="text-rose-400">*</span>
                 </label>
                 <input
                   type="text"
                   required
                   value={editPartyName}
                   onChange={(e) => setEditPartyName(e.target.value)}
-                  className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
-                  Contact Number <span className="text-rose-400">*</span>
-                </label>
-                <input
-                  type="tel"
-                  inputMode="tel"
-                  required
-                  value={editContactNumber}
-                  onChange={(e) => setEditContactNumber(e.target.value)}
-                  className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+                  className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] transition"
                 />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
-                    Machine Count <span className="text-rose-400">*</span>
+                    Contact Person
+                  </label>
+                  <input
+                    type="text"
+                    value={editContactPerson}
+                    onChange={(e) => setEditContactPerson(e.target.value)}
+                    className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] transition"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                    Phone / WhatsApp <span className="text-rose-400">*</span>
+                  </label>
+                  <input
+                    type="tel"
+                    inputMode="tel"
+                    required
+                    value={editContactNumber}
+                    onChange={(e) => setEditContactNumber(e.target.value)}
+                    className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] transition"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                    GST Number
+                  </label>
+                  <input
+                    type="text"
+                    value={editGstNumber}
+                    onChange={(e) => setEditGstNumber(e.target.value.toUpperCase())}
+                    className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] transition uppercase"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                    City / Market
+                  </label>
+                  <input
+                    type="text"
+                    value={editCityMarket}
+                    onChange={(e) => setEditCityMarket(e.target.value)}
+                    className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] transition"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                    Fabric Type <span className="text-rose-400">*</span>
+                  </label>
+                  <select
+                    value={editFabricType}
+                    onChange={(e) => setEditFabricType(e.target.value)}
+                    className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] transition"
+                  >
+                    {FABRIC_TYPES.map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                    Requirement Type <span className="text-rose-400">*</span>
+                  </label>
+                  <select
+                    value={editRequirementType}
+                    onChange={(e) => setEditRequirementType(e.target.value)}
+                    className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] transition"
+                  >
+                    {REQUIREMENT_TYPES.map((req) => (
+                      <option key={req} value={req}>
+                        {req}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                    Loom / Machine Count <span className="text-rose-400">*</span>
                   </label>
                   <input
                     type="number"
@@ -1700,7 +1986,7 @@ export default function App() {
                     required
                     value={editMachineCount}
                     onChange={(e) => setEditMachineCount(e.target.value)}
-                    className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+                    className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] transition"
                   />
                 </div>
 
@@ -1713,30 +1999,42 @@ export default function App() {
                     required
                     value={editMonthlyCapacity}
                     onChange={(e) => setEditMonthlyCapacity(e.target.value)}
-                    className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+                    className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] transition"
                   />
                 </div>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
-                  Factory / Office Address <span className="text-rose-400">*</span>
+                  Weave / Quality Specs
+                </label>
+                <input
+                  type="text"
+                  value={editWeaveSpecs}
+                  onChange={(e) => setEditWeaveSpecs(e.target.value)}
+                  className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] transition"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                  Mill / Factory Address <span className="text-rose-400">*</span>
                 </label>
                 <textarea
                   rows={2}
                   required
                   value={editAddress}
                   onChange={(e) => setEditAddress(e.target.value)}
-                  className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition resize-none"
+                  className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5722] transition resize-none"
                 ></textarea>
               </div>
 
-              {/* Edit Photos */}
+              {/* Edit Swatch Photos */}
               <div className="pt-2 border-t border-slate-800 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-                    <Camera className="w-3.5 h-3.5 text-indigo-400" />
-                    Photos ({editPhotos.length}/{MAX_PHOTOS})
+                    <Scissors className="w-3.5 h-3.5 text-[#FF5722]" />
+                    Swatch Photos ({editPhotos.length}/{MAX_PHOTOS})
                   </span>
                   <div className="flex items-center gap-2">
                     <input
@@ -1768,7 +2066,7 @@ export default function App() {
                         <button
                           type="button"
                           onClick={handleTakeEditPhoto}
-                          className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold flex items-center gap-1 transition"
+                          className="px-2.5 py-1 rounded-lg bg-[#FF5722] hover:bg-[#E64A19] text-white text-xs font-semibold flex items-center gap-1 transition"
                         >
                           <Camera className="w-3 h-3" />
                           <span>Camera</span>
@@ -1782,13 +2080,13 @@ export default function App() {
                   <div className="p-2.5 rounded-lg bg-rose-950/70 text-rose-300 text-xs flex items-center justify-between">
                     <span>{editPhotoError}</span>
                     <button type="button" onClick={() => setEditPhotoError(null)}>
-                      <X className="w-3 h-3" />
+                      <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 )}
 
                 {isEditCompressing && (
-                  <div className="p-2.5 rounded-lg bg-indigo-500/20 text-indigo-300 text-xs flex items-center gap-2">
+                  <div className="p-2.5 rounded-lg bg-[#FF5722]/20 text-[#FF5722] text-xs flex items-center gap-2">
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                     <span>Compressing image (1280px)...</span>
                   </div>
@@ -1799,9 +2097,9 @@ export default function App() {
                     <div
                       key={pIdx}
                       className="relative group rounded-xl overflow-hidden border border-slate-700 bg-slate-950 aspect-square shadow-sm cursor-zoom-in"
-                      onClick={() => openLightbox(editPhotos, pIdx, `Edit Photo #${pIdx + 1}`)}
+                      onClick={() => openLightbox(editPhotos, pIdx, `Edit Swatch #${pIdx + 1}`)}
                     >
-                      <img src={photo} alt={`Photo ${pIdx + 1}`} className="w-full h-full object-cover" />
+                      <img src={photo} alt={`Swatch ${pIdx + 1}`} className="w-full h-full object-cover" />
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); handleRemoveEditPhoto(pIdx); }}
@@ -1827,14 +2125,14 @@ export default function App() {
                 <button
                   type="submit"
                   disabled={isSavingEdit || isEditCompressing}
-                  className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-600/30 transition flex items-center gap-2 disabled:opacity-60"
+                  className="px-6 py-2.5 rounded-xl bg-[#FF5722] hover:bg-[#E64A19] text-white text-xs font-bold shadow-md shadow-[#FF5722]/30 transition flex items-center gap-2 disabled:opacity-60"
                 >
                   {isSavingEdit ? (
                     <RefreshCw className="w-4 h-4 animate-spin" />
                   ) : (
                     <Save className="w-4 h-4" />
                   )}
-                  <span>Save Changes</span>
+                  <span>Save Order Changes</span>
                 </button>
               </div>
             </form>
@@ -1851,13 +2149,13 @@ export default function App() {
                 <Trash2 className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="font-bold text-white text-base">Delete Client Entry?</h3>
+                <h3 className="font-bold text-white text-base">Delete Fabric Order?</h3>
                 <p className="text-xs text-slate-400">This action cannot be undone.</p>
               </div>
             </div>
 
             <p className="text-xs text-slate-300 leading-relaxed bg-slate-950 p-3.5 rounded-xl border border-slate-800">
-              Are you sure you want to delete the submission for{' '}
+              Are you sure you want to delete the order record for{' '}
               <span className="font-bold text-white">"{deletingClient.partyName}"</span> ({deletingClient.contactNumber})?
             </p>
 
@@ -1881,7 +2179,7 @@ export default function App() {
                 ) : (
                   <Trash2 className="w-4 h-4" />
                 )}
-                <span>Yes, Delete Entry</span>
+                <span>Yes, Delete Order</span>
               </button>
             </div>
           </div>

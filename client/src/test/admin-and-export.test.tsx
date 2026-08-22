@@ -129,14 +129,14 @@ describe('4. Admin Dashboard, Image Lightbox & Excel Export Suite', () => {
 
       expect(Filesystem.writeFile).toHaveBeenCalledWith(
         expect.objectContaining({
-          path: expect.stringMatching(/FieldTracker_Verified_\d{4}-\d{2}-\d{2}\.xlsx/),
+          path: expect.stringMatching(/Texhub_Innovations_Verified_\d{4}-\d{2}-\d{2}\.xlsx/),
           directory: 'CACHE',
         })
       );
 
       expect(Share.share).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: expect.stringContaining('Field Tracker Export (Verified)'),
+          title: expect.stringContaining('TEXHUB INNOVATIONS - Client Intake & Field Orders Report (Verified)'),
           url: 'file:///cache/export.xlsx',
         })
       );
@@ -147,14 +147,14 @@ describe('4. Admin Dashboard, Image Lightbox & Excel Export Suite', () => {
 
       expect(Filesystem.writeFile).toHaveBeenCalledWith(
         expect.objectContaining({
-          path: expect.stringMatching(/FieldTracker_All_\d{4}-\d{2}-\d{2}\.csv/),
+          path: expect.stringMatching(/Texhub_Innovations_All_\d{4}-\d{2}-\d{2}\.csv/),
           directory: 'CACHE',
         })
       );
 
       expect(Share.share).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: expect.stringContaining('Field Tracker CSV Export (All)'),
+          title: expect.stringContaining('TEXHUB INNOVATIONS - Client Intake & Field Orders Report (All)'),
           url: 'file:///cache/export.xlsx',
         })
       );

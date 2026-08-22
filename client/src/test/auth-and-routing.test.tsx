@@ -121,12 +121,14 @@ describe('1. Authentication & Role Routing Test Suite', () => {
     localStorage.clear();
   });
 
-  it('renders single unified login screen without admin passkeys or separate admin console routes', async () => {
+  it('renders single unified login screen with TEXHUB branding and without admin passkeys', async () => {
     render(<App />);
 
-    // Check main branding and unified entry
-    expect(screen.getByText('Field Tracker')).toBeInTheDocument();
-    expect(screen.getByText(/Enterprise Mobile Client Intake & Management/i)).toBeInTheDocument();
+    // Check TEXHUB branding and textile tagline
+    expect(screen.getByText('TEX')).toBeInTheDocument();
+    expect(screen.getByText('HUB')).toBeInTheDocument();
+    expect(screen.getByText(/Fabric Designing \| Developing \| Weaving/i)).toBeInTheDocument();
+    expect(screen.getByText(/Expert in make to order "Cotton woven Dobby Fabrics"/i)).toBeInTheDocument();
 
     // Verify Google sign-in button is present
     expect(screen.getByText('Continue with Google')).toBeInTheDocument();
@@ -163,25 +165,25 @@ describe('1. Authentication & Role Routing Test Suite', () => {
     (firebaseAuth.signInWithEmailAndPassword as any).mockResolvedValue({
       user: {
         uid: 'test-agent-uid',
-        email: 'agent@fieldtracker.com',
+        email: 'agent@texhub.in',
         displayName: 'Test Agent',
       },
     });
 
     const { container } = render(<App />);
 
-    const emailInput = screen.getByPlaceholderText('user@example.com');
+    const emailInput = screen.getByPlaceholderText('agent@texhub.in');
     const passwordInput = screen.getByPlaceholderText('••••••••');
     const submitBtn = container.querySelector('button[type="submit"]') as HTMLButtonElement;
 
-    fireEvent.change(emailInput, { target: { value: 'agent@fieldtracker.com' } });
+    fireEvent.change(emailInput, { target: { value: 'agent@texhub.in' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
     fireEvent.click(submitBtn);
 
     await waitFor(() => {
       expect(firebaseAuth.signInWithEmailAndPassword).toHaveBeenCalledWith(
         expect.anything(),
-        'agent@fieldtracker.com',
+        'agent@texhub.in',
         'password123'
       );
     });
